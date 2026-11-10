@@ -33,7 +33,8 @@ const OLLAMA_DEFAULT_MODELS = [
 
 // App State
 const state = {
-    engine: 'instant', // 'instant', 'webllm', or 'ollama'
+    engine: 'instant',
+    webSearch: localStorage.getItem('localai_web_search') !== 'false', // 'instant', 'webllm', or 'ollama'
     selectedModel: INSTANT_MODELS[0].id,
     systemPrompt: "You are a helpful, smart, and direct AI assistant.",
     temperature: 0.7,
@@ -59,6 +60,7 @@ const elements = {
     tabOllama: document.getElementById('tabOllama'),
     modelSelect: document.getElementById('modelSelect'),
     webSearchToggleBtn: document.getElementById('webSearchToggleBtn'),
+    webSearchBtn: document.getElementById('webSearchBtn'),
     onlineVerifyBadge: document.getElementById('onlineVerifyBadge'),
     onlineVerifyLabel: document.getElementById('onlineVerifyLabel'),
     verifyKeyBtn: document.getElementById('verifyKeyBtn'),
@@ -686,18 +688,46 @@ async function sendMessage() {
         if (state.engine === 'instant') {
             let receivedTokens = false;
 
-            // Check if prompt asks for real-time news and webSearch is enabled
+            // Real-Time Internet Search & Documentation Grounding
             const pLower = (text || '').toLowerCase();
             const isNewsRequest = pLower.includes('news') || pLower.includes('headline') || pLower.includes('breaking') || pLower.includes('today') || pLower.includes('latest update');
+            const isEndpointCentralAgent = (pLower.includes('endpoint central') || pLower.includes('desktop central')) && (pLower.includes('agent') || pLower.includes('install') || pLower.includes('setup') || pLower.includes('deploy') || pLower.includes('dcagent'));
+
+            let liveWebSources = [];
+            let liveWebContext = '';
+
+            // Search the live web if webSearch is enabled
+            if (state.webSearch && text.trim().length > 3) {
+                try {
+                    const searchRes = await fetch(`/api/search?q=${encodeURIComponent(text.trim())}`);
+                    if (searchRes.ok) {
+                        const searchData = await searchRes.json();
+                        liveWebSources = searchData.sources || [];
+                        liveWebContext = searchData.webContext || '';
+                    }
+                } catch (e) {
+                    console.warn('[AuraAI] Live web search query error:', e);
+                }
+            }
 
             // 1. Puter.ai: Use ONLY for gpt-4o-mini without sign-up/credit links
             const isPuterSignedIn = typeof window.puter?.auth?.isSignedIn === 'function' ? window.puter.auth.isSignedIn() : false;
             const isPuterEligible = state.selectedModel === 'gpt-4o-mini';
 
-            if (!isNewsRequest && isPuterSignedIn && isPuterEligible && window.puter?.ai?.chat) {
+            // Route Endpoint Central queries or News directly to server for verified documentation & citations
+            const routeToServerFirst = isNewsRequest || isEndpointCentralAgent;
+
+            if (!routeToServerFirst && isPuterSignedIn && isPuterEligible && window.puter?.ai?.chat) {
                 try {
+                    let puterSystem = state.systemPrompt;
+                    if (liveWebSources.length > 0) {
+                        const s0 = liveWebSources[0];
+                        const countStr = liveWebSources.length > 1 ? ` +${liveWebSources.length - 1}` : '';
+                        puterSystem += `\n\n[REAL-TIME LIVE WEB SEARCH RESULTS]\n${liveWebContext}\n\nINSTRUCTIONS: You have live internet search capability. Use the live web results above to provide exact official steps, commands, and links. Include the citation badge [${s0.domain}${countStr}](${s0.url}) in your response.`;
+                    }
+
                     const puterMessages = [
-                        { role: 'system', content: state.systemPrompt },
+                        { role: 'system', content: puterSystem },
                         ...currentChat.messages.map(m => ({ role: m.role, content: m.content }))
                     ];
 
@@ -973,11 +1003,16 @@ function formatMarkdown(text) {
     if (!text) return '';
     try {
         if (window.marked && typeof marked.parse === 'function') {
-            const rawHtml = marked.parse(text, { breaks: true, gfm: true });
+            let rawHtml = marked.parse(text, { breaks: true, gfm: true });
+            
+            // Format citation pills like [ManageEngine +1](https://...) or [Source +N](...) into rich badges
+            rawHtml = rawHtml.replace(/<a\s+href="([^"]+)">([^<]*\+\d+[^<]*)<\/a>/gi, '<a class="source-pill-badge" href="$1" target="_blank" rel="noopener">🌐 $2</a>');
+            rawHtml = rawHtml.replace(/<a\s+href="([^"]+)">🌐\s*([^<]+)<\/a>/gi, '<a class="source-pill-badge" href="$1" target="_blank" rel="noopener">🌐 $2</a>');
+
             if (window.DOMPurify && typeof DOMPurify.sanitize === 'function') {
                 return DOMPurify.sanitize(rawHtml, {
-                    ADD_ATTR: ['target', 'rel'],
-                    ADD_TAGS: ['svg', 'path', 'rect', 'line', 'polyline']
+                    ADD_ATTR: ['target', 'rel', 'class'],
+                    ADD_TAGS: ['svg', 'path', 'rect', 'line', 'polyline', 'span']
                 });
             }
             return rawHtml;
@@ -1252,17 +1287,31 @@ function setupEventListeners() {
         }
     });
 
-    // Web Search & Real-Time News Toggle Button
+    // Web Search & Real-Time Grounding Toggle Buttons
+    const syncWebSearchUI = () => {
+        if (elements.webSearchBtn) {
+            elements.webSearchBtn.classList.toggle('active', !!state.webSearch);
+            elements.webSearchBtn.title = state.webSearch ? "Live Web Search: ON (AI searches internet in real time)" : "Live Web Search: OFF (Click to enable)";
+        }
+        if (elements.webSearchToggleBtn) {
+            elements.webSearchToggleBtn.classList.toggle('active', !!state.webSearch);
+            const lbl = elements.webSearchToggleBtn.querySelector('.web-label');
+            if (lbl) lbl.textContent = state.webSearch ? '🌐 Live Search: ON' : '🌐 Live Search: OFF';
+        }
+    };
+    syncWebSearchUI();
+
+    elements.webSearchBtn?.addEventListener('click', (e) => {
+        e.preventDefault();
+        state.webSearch = !state.webSearch;
+        localStorage.setItem('localai_web_search', state.webSearch ? 'true' : 'false');
+        syncWebSearchUI();
+    });
+
     elements.webSearchToggleBtn?.addEventListener('click', () => {
         state.webSearch = !state.webSearch;
-        if (state.webSearch) {
-            elements.webSearchToggleBtn.classList.add('active');
-            elements.webSearchToggleBtn.querySelector('.web-label').textContent = '🌐 Live News: ON';
-        } else {
-            elements.webSearchToggleBtn.classList.remove('active');
-            elements.webSearchToggleBtn.querySelector('.web-label').textContent = '🌐 Live News: OFF';
-        }
         localStorage.setItem('localai_web_search', state.webSearch ? 'true' : 'false');
+        syncWebSearchUI();
     });
 
     // File Attachment Button & Hidden Input

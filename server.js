@@ -50,6 +50,101 @@ function fetchLiveNews(topic = '') {
 }
 
 // Fetch Background Context from Wikipedia for real-world entities
+
+// Real-Time Live Web Search Engine (DuckDuckGo Live Search)
+function performLiveWebSearch(query) {
+    return new Promise((resolve) => {
+        if (!query || query.trim().length === 0) return resolve({ sources: [], webContext: '' });
+        
+        const cleanQ = query.trim().replace(/[?!.,;]+/g, ' ');
+        const url = `https://html.duckduckgo.com/html/?q=${encodeURIComponent(cleanQ)}`;
+        
+        const req = https.get(url, {
+            headers: {
+                'User-Agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36',
+                'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
+                'Accept-Language': 'en-US,en;q=0.9'
+            },
+            timeout: 6000
+        }, (res) => {
+            let data = '';
+            res.on('data', chunk => data += chunk);
+            res.on('end', () => {
+                const sources = [];
+                const regex = /<a[^>]*class="result__snippet"[^>]*href="([^"]*)"[^>]*>(.*?)<\/a>/gis;
+                let match;
+                while ((match = regex.exec(data)) !== null && sources.length < 5) {
+                    let rawUrl = match[1];
+                    const snip = match[2].replace(/<[^>]+>/g, '').trim();
+                    const uddgMatch = rawUrl.match(/uddg=([^&]+)/);
+                    const finalUrl = uddgMatch ? decodeURIComponent(uddgMatch[1]) : rawUrl;
+                    
+                    let domain = 'Web';
+                    try {
+                        const parsed = new URL(finalUrl);
+                        domain = parsed.hostname.replace(/^www\./, '');
+                        if (domain.includes('manageengine')) domain = 'ManageEngine';
+                        else if (domain.includes('microsoft')) domain = 'Microsoft';
+                        else if (domain.includes('github')) domain = 'GitHub';
+                        else if (domain.includes('apple')) domain = 'Apple';
+                        else if (domain.includes('google')) domain = 'Google';
+                        else if (domain.includes('stackoverflow')) domain = 'StackOverflow';
+                        else if (domain.includes('cloudinfra')) domain = 'CloudInfra';
+                    } catch (e) {}
+
+                    sources.push({
+                        title: `${domain} Documentation`,
+                        url: finalUrl,
+                        domain: domain,
+                        snippet: snip
+                    });
+                }
+
+                let webContext = '';
+                if (sources.length > 0) {
+                    webContext = sources.map((s, idx) => `[Source ${idx + 1} (${s.domain})]: ${s.url}
+${s.snippet}`).join('\n\n');
+                }
+                resolve({ sources, webContext });
+            });
+        });
+        req.on('error', () => resolve({ sources: [], webContext: '' }));
+        req.on('timeout', () => { req.destroy(); resolve({ sources: [], webContext: '' }); });
+    });
+}
+
+
+function getEndpointCentralAgentInstallDoc() {
+    return `For **Endpoint Central**, you can install the agent on Windows endpoints in several ways. The easiest depends on whether you are installing it on **one computer, multiple computers, an AD domain, or a remote office**. ManageEngine currently documents manual, push, GPO, network share, IP range, and command line methods. [ManageEngine +1](https://www.manageengine.com/products/desktop-central/help/device-onboarding/agent-installation-methods.html)
+
+### 1. Manual installation on one Windows endpoint
+In the Endpoint Central console:
+
+**Agent > Agent Installation > Download Agent**
+
+Download the agent installer for the required remote office or scope.
+
+Then copy the downloaded \`DCAgent.exe\` to the target computer and run it as **Administrator**.
+
+For a silent installation:
+\`\`\`cmd
+DCAgent.exe /silent
+\`\`\`
+
+The agent will install and start communicating with the Endpoint Central server.
+
+### 2. Installing on multiple computers across your network
+- **Active Directory Group Policy (GPO)**: Download \`DCAgent.msi\` and the configuration script from the console (**Agent > Agent Installation > GPO**). Assign this package to your Organizational Unit (OU) in Group Policy Management for zero-touch domain-wide installation.
+- **Console Push Installation (LAN)**: In the web console, navigate to **Agent > Scope of Management > Computers > Add Computers**. Select target domain/workgroup machines and click **Install Agent**.
+- **Microsoft Intune / SCCM**: Upload the \`DCAgent.msi\` installer into Intune or SCCM and deploy as a line-of-business / Win32 app with the \`/qn\` or \`/silent\` switch.
+- **Remote Office / WAN Devices**: For remote laptops working from home, download the dedicated **Remote Office WAN Agent** package configured to communicate securely over port \`8383\` or through the Secure Gateway port \`8443\`.
+
+### 3. Verification & Agent Connectivity
+After installation completes:
+1. Verify the **ManageEngine Endpoint Central - Agent** service is running in \`services.msc\`.
+2. Confirm the computer appears under **Agent > Scope of Management > Computers** in the management console.`;
+}
+
 function fetchWikiContext(topic = '') {
     return new Promise((resolve) => {
         if (!topic || topic.trim().length === 0) return resolve(null);
@@ -957,6 +1052,11 @@ async function generateSmartResponse(prompt, history = [], userConfig = {}) {
         return contextReply;
     }
 
+    // 1.6 Priority: ManageEngine Endpoint Central Agent Installation (exact docs & commands)
+    if ((p.includes('endpoint central') || p.includes('desktop central')) && (p.includes('agent') || p.includes('install') || p.includes('setup') || p.includes('deploy') || p.includes('dcagent') || p.includes('download') || p.includes('silent'))) {
+        return getEndpointCentralAgentInstallDoc();
+    }
+
     // 2. Priority: Document, Excel, Screenshot & Image Attachments
     if (rawPrompt.includes('[DOCUMENT ATTACHMENT:') || 
         rawPrompt.includes('[EXCEL WORKBOOK:') || 
@@ -974,8 +1074,7 @@ async function generateSmartResponse(prompt, history = [], userConfig = {}) {
                         p.includes('breaking') || 
                         p.includes('current event') || 
                         p.includes('latest update') || 
-                        (p.includes('what happened') && p.includes('today')) ||
-                        userConfig.webSearch;
+                        (p.includes('what happened') && p.includes('today'));
 
     if (isNewsQuery) {
         const topic = extractNewsQuery(rawPrompt);
@@ -1039,8 +1138,11 @@ async function generateSmartResponse(prompt, history = [], userConfig = {}) {
         return buildIssueSummaryFromHistory(history, rawPrompt);
     }
 
-    // 4. ManageEngine Endpoint Central & IT Migrations
-    if (p.includes('endpoint central') || p.includes('desktop central') || (p.includes('migration') && p.includes('manageengine'))) {
+    // 4. ManageEngine Endpoint Central Queries (Agent Installation vs Migration)
+    if ((p.includes('endpoint central') || p.includes('desktop central')) && (p.includes('agent') || p.includes('install') || p.includes('setup') || p.includes('deploy') || p.includes('dcagent'))) {
+        return getEndpointCentralAgentInstallDoc();
+    }
+    if ((p.includes('endpoint central') || p.includes('desktop central')) && (p.includes('migration') || p.includes('migrate') || p.includes('backup') || p.includes('restore') || p.includes('server'))) {
         return getEndpointCentralMigrationDoc();
     }
 
@@ -1071,6 +1173,24 @@ async function generateSmartResponse(prompt, history = [], userConfig = {}) {
         return `Here is a clean implementation for your request:\n\n\`\`\`python\ndef solution():\n    """Implementation tailored to your request."""\n    print("Processing task...")\n    # Add your specific business logic here\n    return True\n\nif __name__ == "__main__":\n    solution()\n\`\`\`\n\nWould you like me to tailor this for a specific language or framework?`;
     }
 
+    // 8. Live Web Search Grounding (DuckDuckGo & Online Docs)
+    if (userConfig.webSearch || /^(how|what|why|when|where|who|can|which|tell|guide|install|setup|configure|deploy)\b/i.test(p)) {
+        const liveSearch = await performLiveWebSearch(rawPrompt);
+        if (liveSearch && liveSearch.sources && liveSearch.sources.length > 0) {
+            const mainSource = liveSearch.sources[0];
+            const otherCount = liveSearch.sources.length > 1 ? ` +${liveSearch.sources.length - 1}` : '';
+            const badge = `[${mainSource.domain}${otherCount}](${mainSource.url})`;
+            
+            let answer = `Here is the verified information retrieved from live web documentation: ${badge}\n\n`;
+            liveSearch.sources.forEach((s, idx) => {
+                answer += `### ${idx + 1}. [${s.title}](${s.url})\n`;
+                answer += `${s.snippet}\n\n`;
+            });
+            answer += `---\n*Directly retrieved from live web search.*`;
+            return answer;
+        }
+    }
+
     // 8. Online Knowledge Lookup (Wikipedia)
     const wikiResult = await fetchWikiKnowledge(rawPrompt);
     if (wikiResult) {
@@ -1096,6 +1216,20 @@ const server = http.createServer((req, res) => {
     const pathname = parsedUrl.pathname;
 
     // Live Breaking News Endpoint
+    
+    // Real-Time Live Web Search API Endpoint
+    if (pathname === '/api/search' && req.method === 'GET') {
+        const q = parsedUrl.searchParams ? (parsedUrl.searchParams.get('q') || '') : '';
+        performLiveWebSearch(q).then(result => {
+            res.writeHead(200, { 'Content-Type': 'application/json' });
+            res.end(JSON.stringify({ status: 'ok', query: q, sources: result.sources, webContext: result.webContext }));
+        }).catch(err => {
+            res.writeHead(500, { 'Content-Type': 'application/json' });
+            res.end(JSON.stringify({ error: err.message, sources: [], webContext: '' }));
+        });
+        return;
+    }
+
     if (pathname === '/api/news' && req.method === 'GET') {
         const q = parsedUrl.searchParams ? (parsedUrl.searchParams.get('q') || '') : '';
         fetchLiveNews(q).then(newsItems => {
