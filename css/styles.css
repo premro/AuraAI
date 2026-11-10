@@ -1401,3 +1401,134 @@ body.light-theme .user-message-text a {
     object-fit: contain;
     box-shadow: 0 0 28px rgba(0, 242, 254, 0.55), 0 0 45px rgba(168, 85, 247, 0.35);
 }
+
+/* ============================================================
+   File & Screenshot Attachment Previews & Input Area Fixes
+   ============================================================ */
+.attachment-preview-bar {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 8px;
+    padding: 6px 8px;
+    max-height: 110px;
+    overflow-y: auto;
+    border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+    margin-bottom: 4px;
+    width: 100%;
+}
+
+.attachment-chip {
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+    background: rgba(255, 255, 255, 0.08);
+    border: 1px solid rgba(255, 255, 255, 0.14);
+    border-radius: 10px;
+    padding: 3px 8px 3px 5px;
+    max-width: 220px;
+    cursor: pointer;
+    transition: var(--transition);
+    user-select: none;
+    flex-shrink: 0;
+}
+
+.attachment-chip:hover {
+    background: rgba(255, 255, 255, 0.14);
+    border-color: rgba(99, 102, 241, 0.5);
+}
+
+.attachment-chip-thumb {
+    width: 32px !important;
+    height: 32px !important;
+    max-width: 32px !important;
+    max-height: 32px !important;
+    border-radius: 6px;
+    object-fit: cover !important;
+    flex-shrink: 0;
+    display: block;
+    border: 1px solid rgba(255, 255, 255, 0.2);
+    box-shadow: 0 1px 4px rgba(0, 0, 0, 0.3);
+}
+
+.attachment-chip-icon {
+    font-size: 16px;
+    line-height: 1;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    width: 28px;
+    height: 28px;
+    flex-shrink: 0;
+}
+
+.attachment-chip-info {
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+    line-height: 1.2;
+    min-width: 0;
+    flex: 1;
+}
+
+.attachment-chip-name {
+    font-size: 11.5px;
+    font-weight: 500;
+    color: var(--text-primary);
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    max-width: 130px;
+}
+
+.attachment-chip-size {
+    font-size: 9.5px;
+    color: var(--text-muted);
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+
+.attachment-chip-remove {
+    background: transparent;
+    border: none;
+    color: var(--text-muted);
+    font-size: 13px;
+    cursor: pointer;
+    padding: 2px 4px;
+    border-radius: 4px;
+    line-height: 1;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    transition: var(--transition);
+}
+
+.attachment-chip-remove:hover {
+    color: #ef4444;
+    background: rgba(239, 68, 68, 0.2);
+}
+
+.sidebar-creator-credit {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+    padding-top: 4px;
+    border-top: 1px solid rgba(255, 255, 255, 0.05);
+    margin-top: 6px;
+}
+
+.creator-by-line {
+    padding: 2px 4px 0;
+    font-size: 11px;
+    color: var(--text-muted);
+    letter-spacing: 0.2px;
+}
+
+.creator-prem-name {
+    color: #38bdf8;
+    background: linear-gradient(135deg, #38bdf8, #c084fc);
+    -webkit-background-clip: text;
+    -webkit-text-fill-color: transparent;
+    font-weight: 700;
+}

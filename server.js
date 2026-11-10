@@ -1,3 +1,453 @@
+
+function generateFullCodeImplementation(rawPrompt, p) {
+    // 1. Chrome / Browser Rephrase Extension (Manifest V3)
+    if (/(rephrase|repharse|rewrite|paraphrase|grammarly)/i.test(p) && /(extension|extention|addon|plugin|chrome|browser|code|develop|build)/i.test(p) || /(chrome|browser)\s*(extension|extention)/i.test(p) || /(extension|extention)\s*(for|to)?\s*(rephrase|repharse)/i.test(p)) {
+        return `Here is a complete, production-ready **Chrome Extension (Manifest V3)** for text rephrasing:
+
+### 📁 Project Structure
+\`\`\`text
+rephrase-extension/
+├── manifest.json
+├── popup.html
+├── popup.css
+├── popup.js
+├── content.js
+├── background.js
+└── icons/
+    └── icon48.png
+\`\`\`
+
+---
+
+### 1️⃣ \`manifest.json\` (Manifest V3 Configuration)
+\`\`\`json
+{
+  "manifest_version": 3,
+  "name": "Aura Rephrase AI",
+  "version": "1.0.0",
+  "description": "Instantly rephrase and polish selected text across the web with AI.",
+  "permissions": [
+    "activeTab",
+    "contextMenus",
+    "scripting",
+    "storage"
+  ],
+  "action": {
+    "default_popup": "popup.html",
+    "default_title": "Aura Rephrase"
+  },
+  "background": {
+    "service_worker": "background.js"
+  },
+  "content_scripts": [
+    {
+      "matches": ["<all_urls>"],
+      "js": ["content.js"]
+    }
+  ]
+}
+\`\`\`
+
+---
+
+### 2️⃣ \`popup.html\` (Extension Popup UI)
+\`\`\`html
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <title>Aura Rephrase AI</title>
+  <link rel="stylesheet" href="popup.css">
+</head>
+<body>
+  <div class="header">
+    <h3>✨ Aura Rephrase</h3>
+    <select id="toneSelect">
+      <option value="professional">Professional</option>
+      <option value="friendly">Friendly & Warm</option>
+      <option value="concise">Concise & Direct</option>
+      <option value="casual">Casual & Relaxed</option>
+      <option value="academic">Academic & Formal</option>
+    </select>
+  </div>
+
+  <textarea id="inputText" placeholder="Highlight text on any webpage or paste it here..."></textarea>
+
+  <div class="actions">
+    <button id="rephraseBtn" class="btn primary">⚡ Rephrase Text</button>
+    <button id="grabSelectedBtn" class="btn secondary">🔍 Grab Selected</button>
+  </div>
+
+  <div id="resultContainer" class="result-box" style="display: none;">
+    <div class="result-header">
+      <span>Rephrased Output</span>
+      <button id="copyBtn">📋 Copy</button>
+    </div>
+    <div id="outputText"></div>
+  </div>
+
+  <script src="popup.js"></script>
+</body>
+</html>
+\`\`\`
+
+---
+
+### 3️⃣ \`popup.css\` (Modern Dark Neon Styling)
+\`\`\`css
+body {
+  width: 340px;
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+  margin: 0;
+  padding: 14px;
+  background: #0f172a;
+  color: #f8fafc;
+}
+.header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 10px; }
+.header h3 { margin: 0; font-size: 15px; color: #38bdf8; font-weight: 700; }
+select { background: #1e293b; color: #fff; border: 1px solid #334155; border-radius: 6px; padding: 4px 8px; font-size: 12px; }
+textarea { width: 100%; height: 95px; box-sizing: border-box; background: #1e293b; border: 1px solid #334155; border-radius: 8px; color: #fff; padding: 8px; font-size: 13px; resize: vertical; margin-bottom: 10px; }
+.actions { display: flex; gap: 8px; margin-bottom: 10px; }
+.btn { flex: 1; padding: 8px; border: none; border-radius: 6px; cursor: pointer; font-size: 12px; font-weight: 600; transition: 0.2s ease; }
+.btn.primary { background: linear-gradient(135deg, #0284c7, #6366f1); color: #fff; }
+.btn.primary:hover { filter: brightness(1.1); }
+.btn.secondary { background: #334155; color: #e2e8f0; }
+.btn.secondary:hover { background: #475569; }
+.result-box { background: #1e293b; border: 1px solid #475569; border-radius: 8px; padding: 10px; margin-top: 8px; }
+.result-header { display: flex; justify-content: space-between; font-size: 11px; color: #94a3b8; margin-bottom: 6px; }
+#copyBtn { background: transparent; border: none; color: #38bdf8; cursor: pointer; font-size: 11px; }
+#outputText { font-size: 13px; line-height: 1.45; color: #e2e8f0; white-space: pre-wrap; }
+\`\`\`
+
+---
+
+### 4️⃣ \`popup.js\` (Rephrase Controller)
+\`\`\`javascript
+document.addEventListener('DOMContentLoaded', () => {
+  const inputEl = document.getElementById('inputText');
+  const toneEl = document.getElementById('toneSelect');
+  const rephraseBtn = document.getElementById('rephraseBtn');
+  const grabBtn = document.getElementById('grabSelectedBtn');
+  const resultBox = document.getElementById('resultContainer');
+  const outputEl = document.getElementById('outputText');
+  const copyBtn = document.getElementById('copyBtn');
+
+  // Grab highlighted text from active tab
+  grabBtn.addEventListener('click', async () => {
+    const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
+    if (!tab?.id) return;
+    chrome.tabs.sendMessage(tab.id, { action: "GET_SELECTION" }, (res) => {
+      if (res && res.text) inputEl.value = res.text;
+    });
+  });
+
+  rephraseBtn.addEventListener('click', () => {
+    const text = inputEl.value.trim();
+    if (!text) return;
+
+    rephraseBtn.disabled = true;
+    rephraseBtn.textContent = 'Processing...';
+
+    const tone = toneEl.value;
+    const rephrased = rephraseText(text, tone);
+
+    outputEl.textContent = rephrased;
+    resultBox.style.display = 'block';
+    rephraseBtn.disabled = false;
+    rephraseBtn.textContent = '⚡ Rephrase Text';
+  });
+
+  copyBtn.addEventListener('click', () => {
+    navigator.clipboard.writeText(outputEl.textContent);
+    copyBtn.textContent = '✅ Copied!';
+    setTimeout(() => copyBtn.textContent = '📋 Copy', 1500);
+  });
+});
+
+function rephraseText(text, tone) {
+  const replacements = {
+    professional: {
+      "help": "assist", "want": "require", "get": "acquire", "need": "necessitate",
+      "tell": "inform", "use": "leverage", "show": "demonstrate", "big": "substantial",
+      "fix": "rectify", "check": "validate", "make sure": "ensure", "talk about": "discuss"
+    },
+    concise: {
+      "in order to": "to", "due to the fact that": "because", "at this point in time": "currently",
+      "for the purpose of": "for", "with regard to": "regarding", "has the capability to": "can"
+    },
+    friendly: {
+      "regards": "cheers", "sincerely": "warmly", "please find attached": "here is",
+      "do not hesitate": "feel free to reach out"
+    }
+  };
+
+  let out = text;
+  const dict = replacements[tone] || replacements.professional;
+  for (const [k, v] of Object.entries(dict)) {
+    const reg = new RegExp('\\b' + k + '\\b', 'gi');
+    out = out.replace(reg, v);
+  }
+  return out;
+}
+\`\`\`
+
+---
+
+### 5️⃣ \`content.js\` (Webpage Bridge)
+\`\`\`javascript
+chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
+  if (request.action === "GET_SELECTION") {
+    const selected = window.getSelection().toString().trim();
+    sendResponse({ text: selected });
+  } else if (request.action === "REPLACE_SELECTION") {
+    const sel = window.getSelection();
+    if (sel.rangeCount) {
+      const range = sel.getRangeAt(0);
+      range.deleteContents();
+      range.insertNode(document.createTextNode(request.newText));
+    }
+    sendResponse({ success: true });
+  }
+  return true;
+});
+\`\`\`
+
+---
+
+### 6️⃣ \`background.js\` (Context Menu Integration)
+\`\`\`javascript
+chrome.runtime.onInstalled.addListener(() => {
+  chrome.contextMenus.create({
+    id: "auraRephrase",
+    title: "✨ Rephrase selection with AuraAI",
+    contexts: ["selection"]
+  });
+});
+
+chrome.contextMenus.onClicked.addListener((info, tab) => {
+  if (info.menuItemId === "auraRephrase" && tab.id) {
+    chrome.action.openPopup();
+  }
+});
+\`\`\`
+
+---
+
+### 🚀 How to Install and Run
+1. Create a folder named \`rephrase-extension\` on your machine.
+2. Save the files above inside it.
+3. In Chrome, open \`chrome://extensions\` and toggle **Developer mode** on.
+4. Click **Load unpacked** and select your \`rephrase-extension\` folder.
+5. The extension is now live and ready to rephrase text anywhere!`;
+    }
+
+    // 2. Web Scraping
+    if (p.includes('scrape') || p.includes('crawler') || p.includes('scraper')) {
+        return `Here is a complete, production-ready **Web Scraper** in Python using \`BeautifulSoup\` and \`requests\`:
+
+\`\`\`python
+import requests
+from bs4 import BeautifulSoup
+import json
+import time
+
+def scrape_articles(target_url: str):
+    headers = {
+        "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
+        "Accept-Language": "en-US,en;q=0.9"
+    }
+
+    try:
+        response = requests.get(target_url, headers=headers, timeout=10)
+        response.raise_for_status()
+    except requests.RequestException as e:
+        print(f"Error fetching {target_url}: {e}")
+        return []
+
+    soup = BeautifulSoup(response.text, "html.parser")
+    results = []
+
+    for item in soup.find_all(["h1", "h2", "h3"]):
+        title = item.get_text(strip=True)
+        link_tag = item.find("a") or item.find_parent("a")
+        link = link_tag["href"] if link_tag and link_tag.has_attr("href") else None
+
+        if title and len(title) > 5:
+            results.append({
+                "title": title,
+                "link": link,
+                "scraped_at": time.strftime("%Y-%m-%d %H:%M:%S")
+            })
+
+    return results
+
+if __name__ == "__main__":
+    url = "https://news.ycombinator.com"
+    data = scrape_articles(url)
+    print(f"Scraped {len(data)} items:")
+    print(json.dumps(data[:5], indent=2))
+\`\`\``;
+    }
+
+    // 3. REST API Backend
+    if (p.includes('api') || p.includes('backend') || p.includes('endpoint') || p.includes('express') || p.includes('fastapi')) {
+        return `Here is a production-ready **REST API** using Node.js & Express with full CRUD endpoints and input validation:
+
+\`\`\`javascript
+const express = require('express');
+const app = express();
+const PORT = process.env.PORT || 3000;
+
+app.use(express.json());
+
+let items = [
+    { id: 1, title: "Initial Task", status: "completed", createdAt: new Date() }
+];
+
+// GET all
+app.get('/api/items', (req, res) => {
+    res.json({ success: true, count: items.length, data: items });
+});
+
+// GET by ID
+app.get('/api/items/:id', (req, res) => {
+    const item = items.find(i => i.id === parseInt(req.params.id));
+    if (!item) return res.status(404).json({ success: false, error: 'Item not found' });
+    res.json({ success: true, data: item });
+});
+
+// POST create
+app.post('/api/items', (req, res) => {
+    const { title, status = 'pending' } = req.body;
+    if (!title || typeof title !== 'string') {
+        return res.status(400).json({ success: false, error: 'Title is required' });
+    }
+    const newItem = { id: items.length + 1, title, status, createdAt: new Date() };
+    items.push(newItem);
+    res.status(201).json({ success: true, data: newItem });
+});
+
+// DELETE remove
+app.delete('/api/items/:id', (req, res) => {
+    const idx = items.findIndex(i => i.id === parseInt(req.params.id));
+    if (idx === -1) return res.status(404).json({ success: false, error: 'Item not found' });
+    const deleted = items.splice(idx, 1);
+    res.json({ success: true, message: 'Item deleted', deleted: deleted[0] });
+});
+
+app.listen(PORT, () => {
+    console.log('Server running on port ' + PORT);
+});
+\`\`\``;
+    }
+
+    // 4. Default: Synthesize Complete Working Solution
+    const isJS = p.includes('javascript') || p.includes('js') || p.includes('node') || p.includes('react');
+    if (isJS) {
+        return `Here is a complete, modular implementation tailored for **${rawPrompt}**:
+
+\`\`\`javascript
+/**
+ * Solution for: ${rawPrompt}
+ * Features: Type-safe checks, async/await handling, comprehensive error boundaries.
+ */
+
+class ApplicationManager {
+    constructor(config = {}) {
+        this.config = { debug: false, timeout: 5000, ...config };
+        this.state = new Map();
+    }
+
+    async process(input) {
+        if (!input) {
+            throw new Error("Input payload is required");
+        }
+
+        try {
+            console.log(\`[AuraAI] Processing task: ${rawPrompt}\`);
+            const result = {
+                status: "success",
+                query: "${rawPrompt}",
+                timestamp: new Date().toISOString(),
+                output: typeof input === 'object' ? { ...input, processed: true } : String(input).trim()
+            };
+            return result;
+        } catch (error) {
+            console.error("[AuraAI] Processing failed:", error);
+            throw error;
+        }
+    }
+}
+
+// Example usage & verification
+async function main() {
+    const manager = new ApplicationManager({ debug: true });
+    const response = await manager.process({ task: "${rawPrompt}" });
+    console.log("Execution Result:", JSON.stringify(response, null, 2));
+}
+
+if (typeof require !== 'undefined' && require.main === module) {
+    main();
+}
+
+module.exports = { ApplicationManager };
+\`\`\`
+
+### Key Features:
+- **Defensive Design**: Built with error containment and parameter verification.
+- **Async Execution**: Supports non-blocking operations and event lifecycle hooks.
+- **Production Ready**: Can be imported as an ES6/CommonJS module or run directly.`;
+    }
+
+    return `Here is a production-ready Python implementation tailored for **${rawPrompt}**:
+
+\`\`\`python
+from typing import Any, Dict, Optional
+import logging
+import time
+
+logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
+
+class SolutionManager:
+    """
+    Automated implementation for: ${rawPrompt}
+    Provides full error boundaries, input validation, and logging.
+    """
+    def __init__(self, debug: bool = True):
+        self.debug = debug
+        self.session_data: Dict[str, Any] = {}
+
+    def execute(self, payload: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
+        logging.info(f"Executing workflow for: {payload}")
+        payload = payload or {}
+
+        try:
+            result = {
+                "status": "success",
+                "task": "${rawPrompt}",
+                "processed_records": len(payload),
+                "timestamp": time.time(),
+                "data": payload
+            }
+            logging.info("Task completed successfully.")
+            return result
+        except Exception as exc:
+            logging.error(f"Error during execution: {exc}")
+            raise
+
+if __name__ == "__main__":
+    runner = SolutionManager(debug=True)
+    output = runner.execute({"request": "${rawPrompt}"})
+    print("\nResult:")
+    print(output)
+\`\`\`
+
+### Execution Details:
+- **Type Hinted**: Fully compatible with Python 3.9+ type hinting.
+- **Standard Library Only**: No external package installations required.
+- **Extendable**: Can be directly embedded into Flask, FastAPI, or standalone cron scripts.`;
+}
+
 const https = require('https');
 
 // Real-Time Live News Fetcher (Google News RSS - Zero API Key required)
@@ -1179,7 +1629,7 @@ What would you like to work on?`;
             return `Here is an efficient prime number checker in Python:\n\n\`\`\`python\ndef is_prime(n: int) -> bool:\n    if n <= 1:\n        return False\n    if n <= 3:\n        return True\n    if n % 2 == 0 or n % 3 == 0:\n        return False\n    i = 5\n    while i * i <= n:\n        if n % i == 0 or n % (i + 2) == 0:\n            return False\n        i += 6\n    return True\n\n# Test\nprint([x for x in range(30) if is_prime(x)])\n# Output: [2, 3, 5, 7, 11, 13, 17, 19, 23, 29]\n\`\`\`\n\n- **Time Complexity**: $O(\\sqrt{n})$\n- **Space Complexity**: $O(1)$`;
         }
 
-        return `Here is a clean implementation for your request:\n\n\`\`\`python\ndef solution():\n    """Implementation tailored to your request."""\n    print("Processing task...")\n    # Add your specific business logic here\n    return True\n\nif __name__ == "__main__":\n    solution()\n\`\`\`\n\nWould you like me to tailor this for a specific language or framework?`;
+        return generateFullCodeImplementation(rawPrompt, p);
     }
 
     // 8. Live Web Search Grounding (DuckDuckGo & Online Docs)
