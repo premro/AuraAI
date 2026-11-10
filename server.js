@@ -1417,7 +1417,10 @@ function handleRequest(req, res) {
     // Static file serving with strict path traversal immunity
     let safePath = pathname === '/' ? '/index.html' : pathname;
     const projectRoot = path.resolve(__dirname);
-    const filePath = path.resolve(projectRoot, '.' + safePath);
+    let filePath = path.resolve(projectRoot, 'public' + safePath);
+    if (!fs.existsSync(filePath)) {
+        filePath = path.resolve(projectRoot, '.' + safePath);
+    }
 
     if (!filePath.startsWith(projectRoot)) {
         res.writeHead(403, { 'Content-Type': 'text/plain; charset=utf-8' });
