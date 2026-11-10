@@ -194,6 +194,18 @@ async function checkOllamaServer() {
     } catch (e) {}
 }
 
+function updateOnlineVerificationBadge() {
+    if (elements.onlineVerifyBadge) {
+        if (state.apiKey) {
+            elements.onlineVerifyBadge.classList.add('verified');
+            if (elements.onlineVerifyLabel) elements.onlineVerifyLabel.textContent = 'API Key Active';
+        } else {
+            elements.onlineVerifyBadge.classList.remove('verified');
+            if (elements.onlineVerifyLabel) elements.onlineVerifyLabel.textContent = 'Free Instant Mode';
+        }
+    }
+}
+
 function populateModelDropdown() {
     if (!elements.modelSelect) return;
     elements.modelSelect.innerHTML = '';
@@ -1506,9 +1518,41 @@ function setupEventListeners() {
 
     elements.exportChatBtn.addEventListener('click', exportChat);
 
-    // Sidebar Mobile Toggles
-    elements.sidebarOpenBtn?.addEventListener('click', () => elements.sidebar.classList.add('open'));
-    elements.sidebarToggleBtn?.addEventListener('click', () => elements.sidebar.classList.toggle('collapsed'));
+    function toggleSidebar(collapsed) {
+    const isMobile = window.innerWidth <= 768;
+    if (isMobile) {
+        if (collapsed === true) {
+            elements.sidebar?.classList.remove('open');
+        } else if (collapsed === false) {
+            elements.sidebar?.classList.add('open');
+        } else {
+            elements.sidebar?.classList.toggle('open');
+        }
+    } else {
+        const shouldCollapse = collapsed !== undefined ? collapsed : !elements.sidebar?.classList.contains('collapsed');
+        if (shouldCollapse) {
+            elements.sidebar?.classList.add('collapsed');
+            document.body.classList.add('sidebar-is-collapsed');
+            try { localStorage.setItem('localai_sidebar_collapsed', 'true'); } catch (e) {}
+        } else {
+            elements.sidebar?.classList.remove('collapsed');
+            document.body.classList.remove('sidebar-is-collapsed');
+            try { localStorage.setItem('localai_sidebar_collapsed', 'false'); } catch (e) {}
+        }
+    }
+}
+
+    // Sidebar Slide / Collapse Toggles
+    elements.sidebarOpenBtn?.addEventListener('click', (e) => {
+        e.preventDefault();
+        e.stopPropagation();
+        toggleSidebar(false);
+    });
+    elements.sidebarToggleBtn?.addEventListener('click', (e) => {
+        e.preventDefault();
+        e.stopPropagation();
+        toggleSidebar();
+    });
 
     // Dark/Light Theme Toggle
     elements.themeToggleBtn.addEventListener('click', () => {
