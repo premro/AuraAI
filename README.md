@@ -116,7 +116,7 @@ docker run -p 3000:3000 chatgpt-clone-localai
 ## 👤 Author
 
 **Created by Prem**  
-- GitHub: [@your-username](https://github.com/)
+- GitHub: https://github.com/premro
 
 ---
 
