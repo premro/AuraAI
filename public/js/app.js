@@ -126,10 +126,81 @@ const elements = {
 // ==========================================
 // Initialization
 // ==========================================
+
+// ==========================================
+// Device Workspace & Profile Detection
+// ==========================================
+function initDeviceWorkspace() {
+    const avatarEl = document.getElementById('deviceWorkspaceAvatar');
+    const nameEl = document.getElementById('deviceWorkspaceName');
+    const detailsEl = document.getElementById('deviceWorkspaceDetails');
+    const badgeEl = document.getElementById('deviceWorkspaceBadge');
+
+    if (!nameEl || !detailsEl) return;
+
+    // Detect device / OS from userAgent
+    const ua = navigator.userAgent || '';
+    let defaultName = 'Mac Device';
+    let defaultWorkspace = 'macOS Workspace';
+    let defaultAvatar = '';
+
+    if (/iPhone/i.test(ua)) {
+        defaultName = 'iPhone';
+        defaultWorkspace = 'iOS Mobile';
+        defaultAvatar = '📱';
+    } else if (/iPad/i.test(ua)) {
+        defaultName = 'iPad';
+        defaultWorkspace = 'iPadOS Tablet';
+        defaultAvatar = '📱';
+    } else if (/Android/i.test(ua)) {
+        defaultName = 'Android Device';
+        defaultWorkspace = 'Android Mobile';
+        defaultAvatar = '📱';
+    } else if (/Windows/i.test(ua)) {
+        defaultName = 'Windows PC';
+        defaultWorkspace = 'Windows Workspace';
+        defaultAvatar = '🪟';
+    } else if (/Linux/i.test(ua)) {
+        defaultName = 'Linux Workstation';
+        defaultWorkspace = 'Linux Workspace';
+        defaultAvatar = '🐧';
+    } else if (/Macintosh|Mac OS X/i.test(ua)) {
+        defaultName = 'Mac Device';
+        defaultWorkspace = 'macOS Workspace';
+        defaultAvatar = '';
+    }
+
+    const savedName = localStorage.getItem('aura_device_name') || defaultName;
+    const savedWorkspace = localStorage.getItem('aura_workspace_name') || defaultWorkspace;
+    const savedAvatar = localStorage.getItem('aura_device_avatar') || defaultAvatar;
+
+    nameEl.textContent = savedName;
+    detailsEl.textContent = savedWorkspace;
+    if (avatarEl) avatarEl.textContent = savedAvatar;
+
+    if (badgeEl) {
+        badgeEl.style.cursor = 'pointer';
+        badgeEl.onclick = () => {
+            const newName = prompt('Customize your Device / User Name:', savedName);
+            if (newName && newName.trim()) {
+                const trimmed = newName.trim();
+                localStorage.setItem('aura_device_name', trimmed);
+                nameEl.textContent = trimmed;
+                if (avatarEl) {
+                    const firstChar = trimmed.charAt(0).toUpperCase();
+                    localStorage.setItem('aura_device_avatar', firstChar);
+                    avatarEl.textContent = firstChar;
+                }
+            }
+        };
+    }
+}
+
 async function initApp() {
     try {
         loadPreferences();
         setupEventListeners();
+        initDeviceWorkspace();
         populateModelDropdown();
         updateOnlineVerificationBadge();
         renderChatList();
@@ -632,8 +703,10 @@ async function sendMessage() {
         currentAttachments.forEach((att) => {
             llmPrompt += `${att.content}\n\n`;
         });
+        llmPrompt += text ? `User Request: ${text}` : `User Request: Please analyze the attached file(s) and provide key insights.`;
+    } else {
+        llmPrompt = text;
     }
-    llmPrompt += text ? `User Request: ${text}` : `User Request: Please analyze the attached file(s) and provide key insights.`;
 
     // Auto title if first message
     if (currentChat.messages.length === 0) {
@@ -722,14 +795,13 @@ async function sendMessage() {
                 }
             }
 
-            // 1. Puter.ai: Use ONLY for gpt-4o-mini without sign-up/credit links
-            const isPuterSignedIn = typeof window.puter?.auth?.isSignedIn === 'function' ? window.puter.auth.isSignedIn() : false;
+            // 1. Puter.ai: Real-time frontier AI streaming for gpt-4o-mini
             const isPuterEligible = state.selectedModel === 'gpt-4o-mini';
 
             // Route Endpoint Central queries or News directly to server for verified documentation & citations
             const routeToServerFirst = isNewsRequest || isEndpointCentralAgent;
 
-            if (!routeToServerFirst && isPuterSignedIn && isPuterEligible && window.puter?.ai?.chat) {
+            if (!routeToServerFirst && isPuterEligible && window.puter?.ai?.chat) {
                 try {
                     let puterSystem = state.systemPrompt;
                     if (liveWebSources.length > 0) {

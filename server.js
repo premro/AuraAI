@@ -1011,8 +1011,8 @@ function resolveConversationContext(rawPrompt, history = []) {
 
 // Intelligent multi-layered AI response generator
 async function generateSmartResponse(prompt, history = [], userConfig = {}) {
-    const rawPrompt = (prompt || '').trim();
-    const p = rawPrompt.toLowerCase();
+    const rawPrompt = (prompt || '').replace(/^(?:User Request|User|Prompt):\s*/i, '').trim();
+    const p = rawPrompt.toLowerCase().replace(/^(?:user request|user|prompt):\s*/i, '').trim();
 
     const activeApiKey = (userConfig.apiKey || process.env.GEMINI_API_KEY || process.env.OPENAI_API_KEY || process.env.GROQ_API_KEY || '').trim();
 
@@ -1152,8 +1152,17 @@ async function generateSmartResponse(prompt, history = [], userConfig = {}) {
     }
 
     // 6. Greetings & Conversational Openers
-    if (p === 'hi' || p === 'hello' || p === 'hey' || p === 'yo' || p.startsWith('hi ') || p.startsWith('hello ')) {
-        return `Hello! 👋 How can I help you today?\n\nI can help you with:\n- **Technical Documentation & Guides**: e.g., *Endpoint Central migration*, *Kubernetes setup*, *Database cutovers*\n- **Math & Calculations**: e.g., \`2+2\`, \`15 * 6\`, \`sqrt(144)\`, algebra\n- **Coding & Debugging**: Python, JavaScript, Swift, C++, SQL, Bash\n- **Issue Summaries & Transcripts**: Summarize chat logs, Jira tickets, and incident notes\n\nWhat would you like to explore?`;
+    if (/^(hi|hello|hey|greetings|howdy|good morning|good afternoon|good evening|yo|sup)\b/i.test(p) || p === 'hi' || p === 'hello') {
+        return `Hello! 👋 How can I help you today?
+
+I can help you with:
+- **Questions & Explanations**: Ask me anything about technology, coding, science, or concepts
+- **Coding & Debugging**: Python, JavaScript, TypeScript, Swift, SQL, Bash
+- **Document & Spreadsheet Analysis**: Drop PDFs, Word docs, Excel files (.xlsx), or screenshots
+- **Free Image Generation**: Just say *"Generate an image of a neon cybernetic city"*
+- **Live Web Research**: Real-time news and documentation search
+
+What would you like to work on?`;
     }
 
     if (p.includes('how are you') || p.includes('who are you') || p.includes('what are you')) {
@@ -1191,10 +1200,13 @@ async function generateSmartResponse(prompt, history = [], userConfig = {}) {
         }
     }
 
-    // 8. Online Knowledge Lookup (Wikipedia)
-    const wikiResult = await fetchWikiKnowledge(rawPrompt);
-    if (wikiResult) {
-        return wikiResult;
+    // 8. Online Knowledge Lookup (Wikipedia) - only for explicit entity/encyclopedic questions
+    const isExplicitKnowledgeQuery = /^(who is|who was|what is|what was|what are|tell me about|explain|describe|history of|biography of|overview of)\b/i.test(rawPrompt);
+    if (isExplicitKnowledgeQuery && rawPrompt.length > 5) {
+        const wikiResult = await fetchWikiKnowledge(rawPrompt);
+        if (wikiResult) {
+            return wikiResult;
+        }
     }
 
     // 9. Structured Technical Response (Informative & Concrete)
