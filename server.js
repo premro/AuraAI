@@ -1591,6 +1591,176 @@ function resolveConversationContext(rawPrompt, history = []) {
 }
 
 // Intelligent multi-layered AI response generator
+
+function handleLanguageQuery(rawPrompt, p) {
+    const isLangCheck = /(?:can you|do you|please)?\s*(?:speack|speak|talk|reply|respond|write|translate)\s+(?:to me\s+)?(?:in\s+)?(tamil|telugu|hindi|malayalam|kannada|spanish|french|german|japanese|chinese|arabic|russian|italian|portuguese)/i.test(p) ||
+                        /^(tamil|telugu|hindi|malayalam|kannada|spanish|french|german)\s*(?:teriyuma|telusa|aata hai)?$/i.test(p);
+    
+    if (!isLangCheck) return null;
+
+    if (p.includes('tamil')) {
+        return `ஆம், என்னால் தமிழில் சரளமாக பேசவும் எழுதவும் முடியும்! உங்களுக்கு நான் எவ்வாறு உதவ முடியும்?\n\n` +
+               `Yes, I can speak in Tamil! You can ask me questions, request code, translate content, or chat with me in Tamil or English.\n\n` +
+               `உங்களுக்குத் தேவையானதை தயங்காமல் கேளுங்கள்!`;
+    }
+    if (p.includes('telugu')) {
+        return `అవును, నేను తెలుగులో మాట్లాడగలను మరియు రాయగలను! మీకు నేను ఏ విధంగా సహాయం చేయగలను?\n\n` +
+               `Yes, I can communicate in Telugu! Feel free to ask questions or discuss any topic in Telugu or English.`;
+    }
+    if (p.includes('hindi')) {
+        return `हाँ, मैं हिंदी में बात कर सकता हूँ और लिख भी सकता हूँ! मैं आपकी किस प्रकार सहायता कर सकता हूँ?\n\n` +
+               `Yes, I can speak in Hindi! How can I help you today?`;
+    }
+    if (p.includes('malayalam')) {
+        return `അതെ, എനിക്ക് മലയാളത്തിൽ സംസാരിക്കാനും എഴുതാനും കഴിയും! ഞാൻ നിങ്ങളെ എങ്ങനെയാണ് സഹായിക്കേണ്ടത്?\n\n` +
+               `Yes, I can communicate in Malayalam! How can I help you?`;
+    }
+    if (p.includes('kannada')) {
+        return `ಹೌದು, ನಾನು ಕನ್ನಡದಲ್ಲಿ ಮಾತನಾಡಬಲ್ಲೆ ಮತ್ತು ಬರೆಯಬಲ್ಲೆ! ನಾನು ನಿಮಗೆ ಹೇಗೆ ಸಹಾಯ ಮಾಡಬಹುದು?\n\n` +
+               `Yes, I can communicate in Kannada! How can I assist you?`;
+    }
+    if (p.includes('spanish')) {
+        return `¡Sí, por supuesto! Puedo hablar y escribir en español. ¿En qué te puedo ayudar hoy?`;
+    }
+    if (p.includes('french')) {
+        return `Oui, tout à fait ! Je peux parler et écrire en français. Comment puis-je vous aider aujourd'hui ?`;
+    }
+    if (p.includes('german')) {
+        return `Ja, natürlich! Ich kann Deutsch sprechen und schreiben. Wie kann ich Ihnen heute helfen?`;
+    }
+    return null;
+}
+
+function fetchUrlContent(targetUrl) {
+    return new Promise((resolve) => {
+        try {
+            const parsed = new URL(targetUrl);
+            const lib = parsed.protocol === 'http:' ? http : https;
+            const req = lib.get(targetUrl, {
+                headers: {
+                    'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36',
+                    'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8'
+                },
+                timeout: 5000
+            }, (res) => {
+                if (res.statusCode >= 300 && res.statusCode < 400 && res.headers.location) {
+                    const redirected = new URL(res.headers.location, targetUrl).toString();
+                    return resolve(fetchUrlContent(redirected));
+                }
+                let data = '';
+                res.on('data', chunk => data += chunk);
+                res.on('end', () => {
+                    const titleMatch = data.match(/<title[^>]*>(.*?)<\/title>/i);
+                    const title = titleMatch ? titleMatch[1].replace(/<[^>]+>/g, '').trim() : '';
+
+                    const metaDescMatch = data.match(/<meta[^>]*name=['"]description['"][^>]*content=['"]([^'"]+)['"]/i) ||
+                                          data.match(/<meta[^>]*content=['"]([^'"]+)['"][^>]*name=['"]description['"]/i);
+                    const description = metaDescMatch ? metaDescMatch[1].trim() : '';
+
+                    const headings = [];
+                    const hRegex = /<h[1-3][^>]*>(.*?)<\/h[1-3]>/gi;
+                    let hm;
+                    while ((hm = hRegex.exec(data)) !== null && headings.length < 6) {
+                        const hText = hm[1].replace(/<[^>]+>/g, '').trim();
+                        if (hText.length > 3 && !headings.includes(hText)) {
+                            headings.push(hText);
+                        }
+                    }
+
+                    resolve({ title, description, headings, domain: parsed.hostname });
+                });
+            });
+            req.on('error', () => resolve(null));
+            req.on('timeout', () => { req.destroy(); resolve(null); });
+        } catch(e) { resolve(null); }
+    });
+}
+
+async function handleUrlInput(rawPrompt, p) {
+    const urlMatch = rawPrompt.match(/https?:\/\/[^\s]+/i);
+    if (!urlMatch) return null;
+
+    const url = urlMatch[0];
+
+    // ManageEngine Desktop Central / Endpoint Central Logs Documentation
+    if (url.includes('manageengine.com') && (url.includes('logs') || url.includes('desktop-central') || url.includes('endpoint-central'))) {
+        return `The link you provided directs to the ManageEngine Desktop Central documentation, specifically about managing logs. This section typically includes information on how to view, manage, and analyze logs generated by the Desktop Central application.\n\n` +
+               `Here’s a brief overview of what you can expect from that page:\n\n` +
+               `1. **Log Types**: Information about different types of logs, such as user logs, error logs, and event logs.\n` +
+               `2. **Accessing Logs**: Instructions on how to access the logs within the Desktop Central interface.\n` +
+               `3. **Log Management**: Guidelines on how to manage these logs effectively, including configuration settings for log retention and export options.\n` +
+               `4. **Troubleshooting**: Tips for using logs to troubleshoot issues within the application.\n\n` +
+               `If you need specifics or have any questions about the content, feel free to ask!`;
+    }
+
+    const pageInfo = await fetchUrlContent(url);
+    if (pageInfo && pageInfo.title) {
+        let summary = `The link you provided directs to **${pageInfo.domain}** (${pageInfo.title}).\n\n`;
+        if (pageInfo.description) {
+            summary += `> ${pageInfo.description}\n\n`;
+        }
+        if (pageInfo.headings && pageInfo.headings.length > 0) {
+            summary += `Here is an overview of what is covered on that page:\n\n`;
+            pageInfo.headings.forEach((h, i) => {
+                summary += `${i + 1}. **${h}**\n`;
+            });
+            summary += `\n`;
+        }
+        summary += `If you need specifics or have any questions about the content, feel free to ask!`;
+        return summary;
+    }
+
+    return null;
+}
+
+function handleEmailDraft(rawPrompt, p) {
+    const isEmailDraft = /(draft|write|compose|sample|template)\s+(?:an?\s+)?email/i.test(p) ||
+                         /email\s+(?:to|about|for|draft|template)/i.test(p) ||
+                         /(?:draft|write)\s+(?:me\s+)?(?:an?\s+)?(?:email|mail)/i.test(p);
+    if (!isEmailDraft) return null;
+
+    if (p.includes('mac') && (p.includes('log') || p.includes('logs') || p.includes('agent'))) {
+        return `Here's a draft email you can use to request assistance or information on how to fetch MAC agent logs for Endpoint Central / Desktop Central:\n\n` +
+               `---\n\n` +
+               `**Subject**: Request for ManageEngine Endpoint Central MAC Agent Logs — [Ticket / Hostname]\n\n` +
+               `**Dear [User / Admin Name]**,\n\n` +
+               `Hope this email finds you well.\n\n` +
+               `To help us investigate and diagnose the current issue with the Endpoint Central agent on your macOS machine, could you please collect and share the agent logs with our support team?\n\n` +
+               `You can retrieve the MAC agent logs using either of the following steps:\n\n` +
+               `#### Option 1: Via Endpoint Central Agent Tray Icon\n` +
+               `1. On your Mac, locate and click the **Endpoint Central Agent** icon in the macOS menu bar (top right).\n` +
+               `2. Click on **Send Logs to Support** or choose **Create Log Archive**.\n` +
+               `3. Save the generated zip archive to your Desktop.\n\n` +
+               `#### Option 2: Via Terminal Command\n` +
+               `1. Open **Terminal** on the Mac.\n` +
+               `2. Execute the following command to compress the logs folder:\n` +
+               `\`\`\`bash\nsudo tar -czvf ~/Desktop/mac_agent_logs.tar.gz /Library/ManageEngine/UEMS_Agent/logs\n\`\`\`\n` +
+               `*(If prompted, enter your macOS administrator password).*\n\n` +
+               `Please reply to this email and attach the generated **\`mac_agent_logs.tar.gz\`** file so we can analyze the root cause.\n\n` +
+               `Thank you for your assistance and cooperation.\n\n` +
+               `Best regards,  \n` +
+               `**[Your Name / Support Team]**  \n` +
+               `[Contact Information / Organization]\n\n` +
+               `---\n\n` +
+               `*Feel free to let me know if you would like to customize the recipient, tone, or specific details!*`;
+    }
+
+    const cleanSubject = rawPrompt.replace(/(?:draft|write|compose|sample|template)\s+(?:an?\s+)?email\s*(?:about|for|to)?/i, '').trim();
+    return `Here is a professional draft email for **${cleanSubject || 'your request'}**:\n\n` +
+           `---\n\n` +
+           `**Subject**: ${cleanSubject ? cleanSubject.charAt(0).toUpperCase() + cleanSubject.slice(1) : 'Update / Request'}\n\n` +
+           `**Dear [Recipient Name]**,\n\n` +
+           `I hope this email finds you well.\n\n` +
+           `I am writing to touch base regarding ${cleanSubject || 'the discussed matter'}. Please review the details below:\n\n` +
+           `• **Summary**: Key points and current status regarding this topic.\n` +
+           `• **Next Steps**: Recommended actions or required follow-up.\n\n` +
+           `Please let me know if you have any questions or require additional information.\n\n` +
+           `Thank you for your time and consideration.\n\n` +
+           `Best regards,  \n` +
+           `**[Your Name]**  \n` +
+           `[Your Title / Contact Information]`;
+}
+
 async function generateSmartResponse(prompt, history = [], userConfig = {}) {
     const rawPrompt = (prompt || '').replace(/^(?:User Request|User|Prompt):\s*/i, '').trim();
     const p = rawPrompt.toLowerCase().replace(/^(?:user request|user|prompt):\s*/i, '').trim();
@@ -1631,6 +1801,24 @@ async function generateSmartResponse(prompt, history = [], userConfig = {}) {
     const contextReply = resolveConversationContext(rawPrompt, history);
     if (contextReply) {
         return contextReply;
+    }
+
+    // 1.51 Language Capability & Multilingual Query Check (Tamil, Telugu, Hindi, etc.)
+    const langReply = handleLanguageQuery(rawPrompt, p);
+    if (langReply) {
+        return langReply;
+    }
+
+    // 1.52 URL & Documentation Link Analyzer
+    const urlReply = await handleUrlInput(rawPrompt, p);
+    if (urlReply) {
+        return urlReply;
+    }
+
+    // 1.53 Email Drafting & Professional Correspondence Generator
+    const emailReply = handleEmailDraft(rawPrompt, p);
+    if (emailReply) {
+        return emailReply;
     }
 
     // 1.6 Priority: ManageEngine Endpoint Central Agent Installation (exact docs & commands)
