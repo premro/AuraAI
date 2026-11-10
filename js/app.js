@@ -1179,51 +1179,110 @@ function renderChatList() {
     if (!elements.historyList) return;
     elements.historyList.innerHTML = '';
 
-    const pinnedChats = (state.chats || []).filter(c => c.pinned);
-    const recentChats = (state.chats || []).filter(c => !c.pinned);
+    const allChats = state.chats || [];
+    if (allChats.length === 0) return;
+
+    const pinnedChats = allChats.filter(c => c.pinned);
+    const unpinnedChats = allChats.filter(c => !c.pinned);
 
     if (pinnedChats.length > 0) {
         const pinHeader = document.createElement('div');
         pinHeader.className = 'history-sublabel';
-        pinHeader.innerHTML = '<span>📌 Pinned</span>';
+        pinHeader.innerHTML = '<span class="sublabel-title">📌 Pinned</span>';
         elements.historyList.appendChild(pinHeader);
 
         pinnedChats.forEach(chat => {
             elements.historyList.appendChild(createChatItemElement(chat));
         });
-
-        const recentHeader = document.createElement('div');
-        recentHeader.className = 'history-sublabel';
-        recentHeader.innerHTML = '<span>Recent</span>';
-        elements.historyList.appendChild(recentHeader);
     }
 
-    recentChats.forEach(chat => {
-        elements.historyList.appendChild(createChatItemElement(chat));
+    // Chronological grouping
+    const now = Date.now();
+    const oneDay = 24 * 60 * 60 * 1000;
+    const todayChats = [];
+    const yesterdayChats = [];
+    const past7DaysChats = [];
+    const olderChats = [];
+
+    unpinnedChats.forEach(chat => {
+        const chatTime = chat.timestamp || now;
+        const age = now - chatTime;
+        if (age < oneDay) {
+            todayChats.push(chat);
+        } else if (age < 2 * oneDay) {
+            yesterdayChats.push(chat);
+        } else if (age < 7 * oneDay) {
+            past7DaysChats.push(chat);
+        } else {
+            olderChats.push(chat);
+        }
     });
+
+    const groups = [
+        { label: 'Today', list: todayChats },
+        { label: 'Yesterday', list: yesterdayChats },
+        { label: 'Previous 7 Days', list: past7DaysChats },
+        { label: 'Older', list: olderChats }
+    ];
+
+    let hasAnyGroup = false;
+    groups.forEach(g => {
+        if (g.list.length > 0) {
+            hasAnyGroup = true;
+            const hdr = document.createElement('div');
+            hdr.className = 'history-sublabel';
+            hdr.innerHTML = `<span class="sublabel-title">${g.label}</span>`;
+            elements.historyList.appendChild(hdr);
+
+            g.list.forEach(chat => {
+                elements.historyList.appendChild(createChatItemElement(chat));
+            });
+        }
+    });
+
+    if (!hasAnyGroup && unpinnedChats.length > 0) {
+        const hdr = document.createElement('div');
+        hdr.className = 'history-sublabel';
+        hdr.innerHTML = '<span class="sublabel-title">Recent</span>';
+        elements.historyList.appendChild(hdr);
+        unpinnedChats.forEach(chat => {
+            elements.historyList.appendChild(createChatItemElement(chat));
+        });
+    }
 }
 
 function createChatItemElement(chat) {
     const item = document.createElement('div');
     item.className = `chat-item ${chat.id === state.activeChatId ? 'active' : ''} ${chat.pinned ? 'is-pinned' : ''}`;
     
+    const titleText = escapeHtml(chat.title || 'New Chat');
     item.innerHTML = `
-        <span class="chat-item-title">${escapeHtml(chat.title)}</span>
+        <div class="chat-item-main">
+            <svg class="chat-item-icon" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"></path>
+            </svg>
+            <span class="chat-item-title">${titleText}</span>
+        </div>
         <div class="chat-item-actions">
             <button class="chat-item-action-btn btn-pin-chat ${chat.pinned ? 'active' : ''}" title="${chat.pinned ? 'Unpin chat' : 'Pin chat'}">
-                ${chat.pinned ? '📌' : '📍'}
+                ${chat.pinned ? '📌' : '<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="12" y1="17" x2="12" y2="22"></line><path d="M5 17h14v-1.76a2 2 0 0 0-1.11-1.79l-1.78-.89A2 2 0 0 1 15 10.77V6a3 3 0 0 0-6 0v4.77a2 2 0 0 1-1.11 1.79l-1.78.89A2 2 0 0 0 5 15.24Z"></path></svg>'}
             </button>
-            <button class="chat-item-action-btn chat-item-delete" title="Delete chat">✕</button>
+            <button class="chat-item-action-btn chat-item-delete" title="Delete conversation">
+                <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                    <line x1="18" y1="6" x2="6" y2="18"></line>
+                    <line x1="6" y1="6" x2="18" y2="18"></line>
+                </svg>
+            </button>
         </div>
     `;
 
     item.addEventListener('click', () => switchChat(chat.id));
     
     const pinBtn = item.querySelector('.btn-pin-chat');
-    pinBtn.addEventListener('click', (e) => togglePinChat(chat.id, e));
+    pinBtn?.addEventListener('click', (e) => togglePinChat(chat.id, e));
     
     const delBtn = item.querySelector('.chat-item-delete');
-    delBtn.addEventListener('click', (e) => deleteChat(chat.id, e));
+    delBtn?.addEventListener('click', (e) => deleteChat(chat.id, e));
 
     return item;
 }
