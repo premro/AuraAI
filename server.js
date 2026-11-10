@@ -1201,7 +1201,33 @@ async function generateSmartResponse(prompt, history = [], userConfig = {}) {
     return `### Technical Analysis: ${rawPrompt}\n\nHere is a comprehensive overview covering key components, architecture, and implementation details for **${rawPrompt}**:\n\n#### 1. Key Principles & Objectives\n- **Target Outcome**: Establish a robust, high-performance solution for ${rawPrompt}.\n- **Standard Standards**: Adheres to modern architectural standards, security compliance, and maintainability.\n\n#### 2. Architecture & Components\n- **Configuration Layer**: Environment parameters, configuration management, and secrets provisioning.\n- **Processing Layer**: Core service orchestration, event dispatching, and error containment.\n- **Integration Points**: Secure API endpoints, telemetry monitoring, and audit logging.\n\n#### 3. Recommended Implementation Steps\n1. **Pre-requisite Validation**: Verify environment compatibility, network ports, and dependencies.\n2. **Deployment / Setup**: Execute standard installation or configuration scripts with appropriate privilege escalation.\n3. **Validation**: Conduct end-to-end smoke testing to verify expected throughput and connectivity.\n\n*Feel free to ask for specific code snippets, deployment configuration files, or step-by-step troubleshooting!*`;
 }
 
-const server = http.createServer((req, res) => {
+function readRequestBody(req) {
+    return new Promise((resolve) => {
+        if (req.body !== undefined && req.body !== null) {
+            if (typeof req.body === 'object') return resolve(req.body);
+            if (typeof req.body === 'string') {
+                try { return resolve(JSON.parse(req.body)); } catch (e) { return resolve({}); }
+            }
+        }
+        let body = '';
+        let bodySize = 0;
+        const MAX_PAYLOAD = 25 * 1024 * 1024;
+        req.on('data', chunk => {
+            bodySize += chunk.length;
+            if (bodySize <= MAX_PAYLOAD) body += chunk;
+        });
+        req.on('end', () => {
+            try {
+                resolve(JSON.parse(body || '{}'));
+            } catch (e) {
+                resolve({});
+            }
+        });
+        req.on('error', () => resolve({}));
+    });
+}
+
+function handleRequest(req, res) {
     res.setHeader('Access-Control-Allow-Origin', '*');
     res.setHeader('Access-Control-Allow-Methods', 'GET, POST, OPTIONS');
     res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Authorization');
@@ -1299,11 +1325,8 @@ const server = http.createServer((req, res) => {
 
     // Live Key Verifier Endpoint
     if (pathname === '/api/verify-key' && req.method === 'POST') {
-        let body = '';
-        req.on('data', chunk => body += chunk);
-        req.on('end', async () => {
+        readRequestBody(req).then(async (parsed) => {
             try {
-                const parsed = JSON.parse(body || '{}');
                 const verifyResult = await verifyOnlineKey(parsed.apiKey);
                 res.writeHead(200, { 'Content-Type': 'application/json; charset=utf-8' });
                 res.end(JSON.stringify(verifyResult));
@@ -1317,22 +1340,8 @@ const server = http.createServer((req, res) => {
 
     // Instant & Online AI Chat Endpoint
     if (pathname === '/api/instant-chat' && req.method === 'POST') {
-        let body = '';
-        let bodySize = 0;
-        const MAX_PAYLOAD = 25 * 1024 * 1024; // 25 MB max
-        req.on('data', chunk => {
-            bodySize += chunk.length;
-            if (bodySize > MAX_PAYLOAD) {
-                res.writeHead(413, { 'Content-Type': 'application/json' });
-                res.end(JSON.stringify({ error: 'Payload too large' }));
-                req.destroy();
-                return;
-            }
-            body += chunk;
-        });
-        req.on('end', async () => {
+        readRequestBody(req).then(async (parsed) => {
             try {
-                const parsed = JSON.parse(body || '{}');
                 const messages = parsed.messages || [];
                 const lastUserMessage = [...messages].reverse().find(m => m.role === 'user')?.content || 'hi';
                 const userConfig = {
@@ -1443,13 +1452,20 @@ const server = http.createServer((req, res) => {
         const stream = fs.createReadStream(filePath);
         stream.pipe(res);
     });
-});
+}
 
-server.listen(PORT, '127.0.0.1', () => {
-    console.log(`\n======================================================`);
-    console.log(`🚀 AuraAI running at http://localhost:${PORT}`);
-    console.log(`⚡ Engine 1: Frontier AI (Online & Intelligent Knowledge)`);
-    console.log(`🌐 Engine 2: WebGPU WebLLM (Meta Llama 3.2, Qwen 2.5, Gemma 2)`);
-    console.log(`💻 Engine 3: Local Ollama (Proxy to http://127.0.0.1:${OLLAMA_PORT})`);
-    console.log(`======================================================\n`);
-});
+const server = http.createServer(handleRequest);
+
+if (require.main === module) {
+    const HOST = process.env.HOST || '0.0.0.0';
+    server.listen(PORT, HOST, () => {
+        console.log(`\n======================================================`);
+        console.log(`🚀 AuraAI running at http://localhost:${PORT}`);
+        console.log(`⚡ Engine 1: Frontier AI (Online & Intelligent Knowledge)`);
+        console.log(`🌐 Engine 2: WebGPU WebLLM (Meta Llama 3.2, Qwen 2.5, Gemma 2)`);
+        console.log(`💻 Engine 3: Local Ollama (Proxy to http://127.0.0.1:${OLLAMA_PORT})`);
+        console.log(`======================================================\n`);
+    });
+}
+
+module.exports = handleRequest;
