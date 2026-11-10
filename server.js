@@ -1227,6 +1227,42 @@ function readRequestBody(req) {
     });
 }
 
+// Pre-cache static frontend assets in memory for Vercel Serverless & Local resilience
+let indexHtmlCache = '';
+let cssCache = '';
+let jsCache = '';
+
+try {
+    indexHtmlCache = fs.readFileSync(path.join(__dirname, 'index.html'), 'utf-8');
+} catch (e) {
+    try { indexHtmlCache = fs.readFileSync(path.join(process.cwd(), 'index.html'), 'utf-8'); } catch (e2) {}
+}
+
+try {
+    cssCache = fs.readFileSync(path.join(__dirname, 'css', 'styles.css'), 'utf-8');
+} catch (e) {
+    try { cssCache = fs.readFileSync(path.join(process.cwd(), 'css', 'styles.css'), 'utf-8'); } catch (e2) {}
+}
+
+try {
+    jsCache = fs.readFileSync(path.join(__dirname, 'js', 'app.js'), 'utf-8');
+} catch (e) {
+    try { jsCache = fs.readFileSync(path.join(process.cwd(), 'js', 'app.js'), 'utf-8'); } catch (e2) {}
+}
+
+function getRequestPath(req) {
+    let rawPath = req.headers['x-matched-path'] || req.headers['x-forwarded-uri'] || req.url;
+    try {
+        const parsed = new URL(rawPath, `http://${req.headers.host || 'localhost'}`);
+        if (parsed.searchParams && parsed.searchParams.get('__path')) {
+            return '/api/' + parsed.searchParams.get('__path');
+        }
+        return parsed.pathname;
+    } catch (e) {
+        return (rawPath || '').split('?')[0];
+    }
+}
+
 function handleRequest(req, res) {
     res.setHeader('Access-Control-Allow-Origin', '*');
     res.setHeader('Access-Control-Allow-Methods', 'GET, POST, OPTIONS');
@@ -1238,8 +1274,25 @@ function handleRequest(req, res) {
         return;
     }
 
+    const pathname = getRequestPath(req);
     const parsedUrl = new URL(req.url, `http://${req.headers.host || 'localhost'}`);
-    const pathname = parsedUrl.pathname;
+
+    // Fast memory static routing for Vercel Serverless
+    if (pathname === '/' || pathname === '/index.html') {
+        res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8' });
+        res.end(indexHtmlCache);
+        return;
+    }
+    if (pathname === '/css/styles.css') {
+        res.writeHead(200, { 'Content-Type': 'text/css; charset=utf-8' });
+        res.end(cssCache);
+        return;
+    }
+    if (pathname === '/js/app.js') {
+        res.writeHead(200, { 'Content-Type': 'application/javascript; charset=utf-8' });
+        res.end(jsCache);
+        return;
+    }
 
     // Live Breaking News Endpoint
     
