@@ -503,13 +503,19 @@ function fetchLiveNews(topic = '') {
 // Fetch Background Context from Wikipedia for real-world entities
 
 // Real-Time Live Web Search Engine (DuckDuckGo Live Search)
-function performLiveWebSearch(query) {
+function normalizeSearchQuery(q) {
+    if (!q) return '';
+    return q
+        .replace(/\bdiveroce\b/gi, 'divorce')
+        .replace(/\bextention\b/gi, 'extension')
+        .replace(/\brepharse\b/gi, 'rephrase')
+        .replace(/\bnew\b$/i, 'news')
+        .trim();
+}
+
+function searchDuckDuckGoLite(cleanQ) {
     return new Promise((resolve) => {
-        if (!query || query.trim().length === 0) return resolve({ sources: [], webContext: '' });
-        
-        const cleanQ = query.trim().replace(/[?!.,;]+/g, ' ');
         const postData = querystring.stringify({ q: cleanQ });
-        
         const req = https.request({
             hostname: 'lite.duckduckgo.com',
             port: 443,
@@ -522,7 +528,7 @@ function performLiveWebSearch(query) {
                 'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
                 'Accept-Language': 'en-US,en;q=0.9'
             },
-            timeout: 6000
+            timeout: 3500
         }, (res) => {
             let data = '';
             res.on('data', chunk => data += chunk);
@@ -562,19 +568,67 @@ function performLiveWebSearch(query) {
                         });
                     }
                 }
-
-                let webContext = '';
-                if (sources.length > 0) {
-                    webContext = sources.map((s, idx) => `[Source ${idx + 1} (${s.domain})]: ${s.title}\n${s.snippet}\nLink: ${s.url}`).join('\n\n');
-                }
-                resolve({ sources, webContext });
+                resolve(sources);
             });
         });
-        req.on('error', () => resolve({ sources: [], webContext: '' }));
-        req.on('timeout', () => { req.destroy(); resolve({ sources: [], webContext: '' }); });
+        req.on('error', () => resolve([]));
+        req.on('timeout', () => { req.destroy(); resolve([]); });
         req.write(postData);
         req.end();
     });
+}
+
+function fetchGoogleNewsSources(cleanQ) {
+    return new Promise((resolve) => {
+        const url = 'https://news.google.com/rss/search?q=' + encodeURIComponent(cleanQ) + '&hl=en-US&gl=US&ceid=US:en';
+        const req = https.get(url, { headers: { 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64)' }, timeout: 3500 }, res => {
+            let data = '';
+            res.on('data', chunk => data += chunk);
+            res.on('end', () => {
+                const items = [];
+                const itemRegex = /<item>[\s\S]*?<title>(.*?)<\/title>[\s\S]*?<link>(.*?)<\/link>[\s\S]*?<pubDate>(.*?)<\/pubDate>[\s\S]*?<source[^>]*>(.*?)<\/source>[\s\S]*?<\/item>/gi;
+                let match;
+                while ((match = itemRegex.exec(data)) !== null && items.length < 6) {
+                    const rawTitle = match[1].replace(/<!\[CDATA\[(.*?)\]\]>/g, '$1').trim();
+                    const link = match[2].trim();
+                    const source = match[4].replace(/<!\[CDATA\[(.*?)\]\]>/g, '$1').trim();
+                    let cleanTitle = rawTitle;
+                    if (cleanTitle.includes(' - ')) {
+                        cleanTitle = cleanTitle.substring(0, cleanTitle.lastIndexOf(' - ')).trim();
+                    }
+                    items.push({
+                        title: cleanTitle,
+                        url: link,
+                        domain: source || 'News',
+                        snippet: cleanTitle
+                    });
+                }
+                resolve(items);
+            });
+        });
+        req.on('error', () => resolve([]));
+        req.on('timeout', () => { req.destroy(); resolve([]); });
+    });
+}
+
+async function performLiveWebSearch(query) {
+    if (!query || query.trim().length === 0) return { sources: [], webContext: '' };
+    const cleanQ = normalizeSearchQuery(query.trim().replace(/[?!.,;]+/g, ' '));
+    
+    // Tier 1: DuckDuckGo Lite
+    let sources = await searchDuckDuckGoLite(cleanQ);
+
+    // Tier 2: Fallback to Google News RSS
+    if (!sources || sources.length === 0) {
+        sources = await fetchGoogleNewsSources(cleanQ);
+    }
+
+    let webContext = '';
+    if (sources && sources.length > 0) {
+        webContext = sources.map((s, idx) => `[Source ${idx + 1} (${s.domain})]: ${s.title}\n${s.snippet}\nLink: ${s.url}`).join('\n\n');
+    }
+
+    return { sources: sources || [], webContext };
 }
 
 function synthesizeFromWebSources(rawPrompt, sources) {
