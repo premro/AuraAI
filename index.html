@@ -1,0 +1,328 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>AuraAI - Free, Unlimited AI with Live News, Image Generation, OCR & Vision</title>
+    
+    <!-- Google Fonts for Modern AI Interface -->
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com">
+    <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+    
+    <!-- Markdown Parser & Code Syntax Highlighting -->
+    <script src="https://cdn.jsdelivr.net/npm/marked@12.0.2/marked.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/dompurify/3.1.6/purify.min.js"></script>
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/styles/github-dark-dimmed.min.css">
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/highlight.min.js"></script>
+    
+    <!-- PDF.js for In-Browser Document Parsing -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js"></script>
+    <script>
+        if (window.pdfjsLib) {
+            pdfjsLib.GlobalWorkerOptions.workerSrc = "https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js";
+        }
+    </script>
+
+    <!-- SheetJS for In-Browser Excel (.xlsx / .xls) Parsing -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
+
+    <!-- Tesseract.js for In-Browser Screenshot & Image OCR Text Extraction -->
+    <script src="https://cdn.jsdelivr.net/npm/tesseract.js@5/dist/tesseract.min.js"></script>
+    <!-- heic2any for Apple iPhone & Mac HEIC / HEIF image conversion -->
+    <script src="https://cdn.jsdelivr.net/npm/heic2any@0.0.4/dist/heic2any.min.js"></script>
+
+
+    <!-- Puter.js for Free Frontier Cloud AI (GPT-4o-mini, Claude, Gemini, DeepSeek) -->
+    <script src="https://js.puter.com/v2/"></script>
+
+    <!-- Application Styles -->
+    <link rel="stylesheet" href="css/styles.css">
+</head>
+<body class="dark-theme">
+    <div class="app-layout">
+        <!-- Sidebar Navigation -->
+        <aside class="sidebar" id="sidebar">
+            <div class="sidebar-header">
+                <button class="btn btn-new-chat" id="newChatBtn">
+                    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                        <line x1="12" y1="5" x2="12" y2="19"></line>
+                        <line x1="5" y1="12" x2="19" y2="12"></line>
+                    </svg>
+                    <span>New Chat</span>
+                </button>
+                <button class="btn-icon sidebar-toggle-btn" id="sidebarToggleBtn" title="Collapse Sidebar">
+                    <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                        <rect x="3" y="3" width="18" height="18" rx="2" ry="2"></rect>
+                        <line x1="9" y1="3" x2="9" y2="21"></line>
+                    </svg>
+                </button>
+            </div>
+
+            <!-- Chat History List -->
+            <div class="chat-history-container">
+                <div class="history-label">Recent Conversations</div>
+                <div class="history-list" id="historyList">
+                    <!-- Populated dynamically via JS -->
+                </div>
+            </div>
+
+            <!-- Sidebar Footer Controls -->
+            <div class="sidebar-footer">
+                <div class="system-status-indicator" id="statusIndicator">
+                    <span class="status-dot online"></span>
+                    <span class="status-label">AI Engine & Live Web Ready</span>
+                </div>
+                <div class="sidebar-actions">
+                    <button class="btn-sidebar-action" id="themeToggleBtn" title="Toggle Dark/Light Mode">
+                        <span id="themeIcon">☀️</span>
+                        <span id="themeText">Light Mode</span>
+                    </button>
+                    <button class="btn-sidebar-action" id="settingsBtn" title="Settings">
+                        <span>⚙️</span>
+                        <span>Settings</span>
+                    </button>
+                </div>
+                <div class="sidebar-creator-credit">
+                    <span>Created by <strong>Prem</strong></span>
+                </div>
+            </div>
+        </aside>
+
+        <!-- Main Chat Area -->
+        <main class="main-content">
+            <!-- Top Navbar -->
+            <header class="topbar">
+                <div class="topbar-left">
+                    <button class="btn-icon sidebar-open-btn" id="sidebarOpenBtn" title="Open Sidebar">
+                        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                            <line x1="3" y1="12" x2="21" y2="12"></line>
+                            <line x1="3" y1="6" x2="21" y2="6"></line>
+                            <line x1="3" y1="18" x2="21" y2="18"></line>
+                        </svg>
+                    </button>
+
+                    <div class="model-select-wrapper chatgpt-model-pill">
+                        <select id="modelSelect" class="model-select" title="Select AI Model">
+                            <!-- Populated dynamically via JS -->
+                        </select>
+                    </div>
+                </div>
+
+                <div class="topbar-right">
+                    <button class="btn-icon" id="topbarNewChatBtn" title="New Chat">
+                        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                            <line x1="12" y1="5" x2="12" y2="19"></line>
+                            <line x1="5" y1="12" x2="19" y2="12"></line>
+                        </svg>
+                    </button>
+                    <button class="btn-icon" id="clearChatBtn" title="Clear Conversation">
+                        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                            <polyline points="3 6 5 6 21 6"></polyline>
+                            <path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"></path>
+                        </svg>
+                    </button>
+                    <button class="btn-icon" id="exportChatBtn" title="Export Conversation">
+                        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                            <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path>
+                            <polyline points="7 10 12 15 17 10"></polyline>
+                            <line x1="12" y1="15" x2="12" y2="3"></line>
+                        </svg>
+                    </button>
+                </div>
+            </header>
+
+            <!-- Loading / Model Progress Bar -->
+            <div class="model-progress-bar-container" id="modelProgressContainer" style="display: none;">
+                <div class="progress-info">
+                    <span id="progressText">Initializing model weights...</span>
+                    <span id="progressPercentage">0%</span>
+                </div>
+                <div class="progress-track">
+                    <div class="progress-fill" id="progressFill" style="width: 0%;"></div>
+                </div>
+            </div>
+
+            <!-- Chat Messages Scroll Container -->
+            <div class="messages-container" id="messagesContainer">
+                <!-- Welcome Banner (shown when no messages exist) -->
+                <div class="welcome-screen" id="welcomeScreen">
+                    <div class="chatgpt-logo-icon">
+                        <svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                            <path d="M12 2L15.09 8.26L22 9.27L17 14.14L18.18 21.02L12 17.77L5.82 21.02L7 14.14L2 9.27L8.91 8.26L12 2Z"></path>
+                        </svg>
+                    </div>
+                    <h1 class="welcome-title">What can I help with?</h1>
+
+                    <div class="suggestions-grid">
+                        <div class="suggestion-card" data-prompt="Help me write code for an application">
+                            <span class="card-icon">💻</span>
+                            <div class="card-title">Write & Debug Code</div>
+                            <div class="card-desc">Build scripts, solve bugs, or refactor architecture</div>
+                        </div>
+                        <div class="suggestion-card" id="attachSuggestionCard">
+                            <span class="card-icon">📎</span>
+                            <div class="card-title">Analyze Documents</div>
+                            <div class="card-desc">Upload PDF, TXT, JSON, code, or screenshots</div>
+                        </div>
+                        <div class="suggestion-card" id="excelSuggestionCard">
+                            <span class="card-icon">📊</span>
+                            <div class="card-title">Spreadsheet Intelligence</div>
+                            <div class="card-desc">Analyze .xlsx, .xls, and .csv tables & formulas</div>
+                        </div>
+                        <div class="suggestion-card" data-prompt="Explain a complex concept with clear analogies">
+                            <span class="card-icon">💡</span>
+                            <div class="card-title">Explain Concepts</div>
+                            <div class="card-desc">Clear step-by-step walkthroughs and deep dives</div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Chat Input Area -->
+            <footer class="chat-input-area">
+                <!-- Document Action Quick Chips -->
+                <div class="doc-action-chips" id="docActionChips" style="display: none;">
+                    <button class="doc-chip" data-action="summarize">📝 Summarize</button>
+                    <button class="doc-chip" data-action="keypoints">🔍 Key Takeaways</button>
+                    <button class="doc-chip" data-action="excel">📊 Analyze Spreadsheet</button>
+                    <button class="doc-chip" data-action="ocr">📷 Extract Screenshot Text</button>
+                    <button class="doc-chip" data-action="image_analyze">🖼️ Analyze Image</button>
+                    <button class="doc-chip" data-action="codereview">💻 Review Code</button>
+                    <button class="doc-chip-clear" id="clearAllAttachmentsBtn" title="Remove all attachments">✕ Clear all</button>
+                </div>
+
+                <div class="input-box-wrapper">
+                    <!-- File Attachment Previews -->
+                    <div class="attachment-preview-bar" id="attachmentPreviewBar" style="display: none;"></div>
+
+                    <div class="input-row">
+                        <button class="btn-attach" id="attachBtn" type="button" title="Attach Document, Excel, or Image (PDF, XLSX, PNG, JPG, CSV, Code)">
+                            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                                <path d="M21.44 11.05l-9.19 9.19a6 6 0 0 1-8.49-8.49l9.19-9.19a4 4 0 0 1 5.66 5.66l-9.2 9.19a2 2 0 0 1-2.83-2.83l8.49-8.48"></path>
+                            </svg>
+                        </button>
+                        <input type="file" id="fileAttachmentInput" multiple style="display: none;" accept="image/*,.heic,.heif,.svg,.png,.jpg,.jpeg,.webp,.gif,.bmp,.tiff,.tif,.avif,.ico,.pdf,.xlsx,.xls,.csv,.tsv,.json,.txt,.md,.js,.jsx,.ts,.tsx,.py,.html,.css,.sql,.xml,.yaml,.yml,.sh,.log">
+
+                        <textarea 
+                            id="chatInput" 
+                            class="chat-textarea" 
+                            placeholder="Message AuraAI, paste screenshots (Cmd+V), attach Excel/PDF/images, or generate images..." 
+                            rows="1"
+                        ></textarea>
+
+                        <div class="input-actions">
+                            <button class="btn-stop" id="stopBtn" style="display: none;" title="Stop Generation">
+                                <div class="stop-icon"></div>
+                                <span>Stop</span>
+                            </button>
+                            <button class="btn-send" id="sendBtn" title="Send message">
+                                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5">
+                                    <line x1="22" y1="2" x2="11" y2="13"></line>
+                                    <polygon points="22 2 15 22 11 13 2 9 22 2"></polygon>
+                                </svg>
+                            </button>
+                        </div>
+                    </div>
+                </div>
+
+                <div class="input-footer-note">
+                    🔒 100% Private & Unlimited • Paste Screenshots (Cmd+V) • Excel (.xlsx) • Real-Time News
+                </div>
+            </footer>
+        </main>
+    </div>
+
+    <!-- Drag & Drop Visual Overlay -->
+    <div class="drag-drop-overlay" id="dragDropOverlay" style="display: none;">
+        <div class="drag-drop-card">
+            <div class="drag-icon">📑</div>
+            <h3>Drop Excel, Images, Screenshots, or Documents Here</h3>
+            <p>Supported: Excel (.xlsx, .xls), Images/Screenshots (.png, .jpg), PDF, Code, CSV, and Text files.</p>
+        </div>
+    </div>
+
+    <!-- Document & Image Viewer Modal -->
+    <div class="modal-overlay" id="docViewerModal" style="display: none;">
+        <div class="modal-content doc-modal-content">
+            <div class="modal-header">
+                <div class="doc-modal-title-wrap">
+                    <span class="doc-modal-icon" id="docModalIcon">📄</span>
+                    <div>
+                        <h2 id="docModalTitle">Document Preview</h2>
+                        <span class="doc-modal-meta" id="docModalMeta"></span>
+                    </div>
+                </div>
+                <div class="doc-modal-actions">
+                    <button class="btn-sidebar-action" id="copyDocContentBtn" title="Copy Content">
+                        📋 Copy Text
+                    </button>
+                    <button class="btn-icon" id="closeDocViewerBtn">✕</button>
+                </div>
+            </div>
+            <div class="modal-body doc-modal-body">
+                <!-- Image Preview (if image) -->
+                <div id="docModalImageWrap" style="display: none; text-align: center; margin-bottom: 16px;">
+                    <img id="docModalImg" style="max-width: 100%; max-height: 380px; border-radius: var(--radius-md); border: 1px solid var(--border-color); box-shadow: 0 4px 16px rgba(0,0,0,0.3);" src="" alt="Preview">
+                </div>
+                <pre class="doc-modal-pre"><code id="docModalCode"></code></pre>
+            </div>
+        </div>
+    </div>
+
+    <!-- Settings Modal -->
+    <div class="modal-overlay" id="settingsModal" style="display: none;">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h2>Chatbot Settings</h2>
+                <button class="btn-icon" id="closeSettingsBtn">✕</button>
+            </div>
+            <div class="modal-body">
+                <div class="setting-group">
+                    <label for="systemPromptInput">System Prompt</label>
+                    <div class="preset-chips">
+                        <button class="chip active" data-preset="default">Helpful Assistant</button>
+                        <button class="chip" data-preset="news">Research Analyst</button>
+                        <button class="chip" data-preset="coder">Expert Programmer</button>
+                        <button class="chip" data-preset="data">Data & Excel Specialist</button>
+                    </div>
+                    <textarea id="systemPromptInput" rows="3">You are a helpful, smart, and direct AI assistant.</textarea>
+                </div>
+
+                <div class="setting-group">
+                    <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 6px;">
+                        <label for="apiKeyInput" style="margin-bottom: 0;">Custom API Key (100% Optional)</label>
+                        <button type="button" class="btn btn-secondary btn-sm" id="verifyKeyBtn" style="padding: 4px 10px; font-size: 11px;">⚡ Test & Verify Key</button>
+                    </div>
+                    <input type="password" id="apiKeyInput" placeholder="AIzaSy... (Gemini) or sk-... (OpenAI / Groq)">
+                    <div id="keyVerificationStatus" style="font-size: 12px; margin-top: 6px; display: none;"></div>
+                    <span class="setting-hint">Optional: AuraAI is <strong>100% free with zero keys and zero sign-in required</strong>. Everything works directly without login or payment. You can optionally add a key if you wish, but it is not required.</span></div>
+
+                <div class="setting-group">
+                    <div class="slider-header">
+                        <label for="temperatureSlider">Temperature: <span id="tempValue">0.7</span></label>
+                    </div>
+                    <input type="range" id="temperatureSlider" min="0" max="1.5" step="0.1" value="0.7">
+                    <div class="slider-labels">
+                        <span>Precise (0.0)</span>
+                        <span>Balanced (0.7)</span>
+                        <span>Creative (1.5)</span>
+                    </div>
+                </div>
+
+                <div class="setting-group" id="ollamaHostGroup">
+                    <label for="ollamaHostInput">Ollama Proxy Host (Optional)</label>
+                    <input type="text" id="ollamaHostInput" value="/api/ollama" placeholder="/api/ollama or http://localhost:11434">
+                    <span class="setting-hint">Only needed if you run Ollama in Terminal with <code>ollama run llama3.2</code>.</span>
+                </div>
+            </div>
+            <div class="modal-footer">
+                <button class="btn btn-primary" id="saveSettingsBtn">Save Changes</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Main JavaScript App -->
+    <script type="module" src="js/app.js"></script>
+</body>
+</html>
