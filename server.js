@@ -449,6 +449,7 @@ if __name__ == "__main__":
 }
 
 const https = require('https');
+const querystring = require('querystring');
 
 // Real-Time Live News Fetcher (Google News RSS - Zero API Key required)
 function fetchLiveNews(topic = '') {
@@ -507,11 +508,17 @@ function performLiveWebSearch(query) {
         if (!query || query.trim().length === 0) return resolve({ sources: [], webContext: '' });
         
         const cleanQ = query.trim().replace(/[?!.,;]+/g, ' ');
-        const url = `https://html.duckduckgo.com/html/?q=${encodeURIComponent(cleanQ)}`;
+        const postData = querystring.stringify({ q: cleanQ });
         
-        const req = https.get(url, {
+        const req = https.request({
+            hostname: 'lite.duckduckgo.com',
+            port: 443,
+            path: '/lite/',
+            method: 'POST',
             headers: {
-                'User-Agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36',
+                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36',
+                'Content-Type': 'application/x-www-form-urlencoded',
+                'Content-Length': Buffer.byteLength(postData),
                 'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
                 'Accept-Language': 'en-US,en;q=0.9'
             },
@@ -521,11 +528,13 @@ function performLiveWebSearch(query) {
             res.on('data', chunk => data += chunk);
             res.on('end', () => {
                 const sources = [];
-                const regex = /<a[^>]*class="result__snippet"[^>]*href="([^"]*)"[^>]*>(.*?)<\/a>/gis;
+                const rowRegex = /<a[^>]*href=['"]([^'"]+)['"][^>]*class=['"]result-link['"][^>]*>(.*?)<\/a>.*?<td[^>]*class=['"]result-snippet['"][^>]*>(.*?)<\/td>/gis;
                 let match;
-                while ((match = regex.exec(data)) !== null && sources.length < 5) {
+                while ((match = rowRegex.exec(data)) !== null && sources.length < 6) {
                     let rawUrl = match[1];
-                    const snip = match[2].replace(/<[^>]+>/g, '').trim();
+                    const rawTitle = match[2].replace(/<[^>]+>/g, '').replace(/&#x27;/g, "'").replace(/&amp;/g, '&').replace(/&quot;/g, '"').trim();
+                    const rawSnippet = match[3].replace(/<[^>]+>/g, '').replace(/&#x27;/g, "'").replace(/&amp;/g, '&').replace(/&quot;/g, '"').trim();
+                    
                     const uddgMatch = rawUrl.match(/uddg=([^&]+)/);
                     const finalUrl = uddgMatch ? decodeURIComponent(uddgMatch[1]) : rawUrl;
                     
@@ -538,31 +547,99 @@ function performLiveWebSearch(query) {
                         else if (domain.includes('github')) domain = 'GitHub';
                         else if (domain.includes('apple')) domain = 'Apple';
                         else if (domain.includes('google')) domain = 'Google';
+                        else if (domain.includes('zoho')) domain = 'zoho.com';
+                        else if (domain.includes('goodreturns')) domain = 'goodreturns.in';
+                        else if (domain.includes('filmibeat')) domain = 'filmibeat.com';
                         else if (domain.includes('stackoverflow')) domain = 'StackOverflow';
-                        else if (domain.includes('cloudinfra')) domain = 'CloudInfra';
                     } catch (e) {}
 
-                    sources.push({
-                        title: `${domain} Documentation`,
-                        url: finalUrl,
-                        domain: domain,
-                        snippet: snip
-                    });
+                    if (rawSnippet.length > 15) {
+                        sources.push({
+                            title: rawTitle,
+                            url: finalUrl,
+                            domain: domain,
+                            snippet: rawSnippet
+                        });
+                    }
                 }
 
                 let webContext = '';
                 if (sources.length > 0) {
-                    webContext = sources.map((s, idx) => `[Source ${idx + 1} (${s.domain})]: ${s.url}
-${s.snippet}`).join('\n\n');
+                    webContext = sources.map((s, idx) => `[Source ${idx + 1} (${s.domain})]: ${s.title}\n${s.snippet}\nLink: ${s.url}`).join('\n\n');
                 }
                 resolve({ sources, webContext });
             });
         });
         req.on('error', () => resolve({ sources: [], webContext: '' }));
         req.on('timeout', () => { req.destroy(); resolve({ sources: [], webContext: '' }); });
+        req.write(postData);
+        req.end();
     });
 }
 
+function synthesizeFromWebSources(rawPrompt, sources) {
+    if (!sources || sources.length === 0) return null;
+
+    const mainSource = sources[0];
+    const otherCount = sources.length > 1 ? ` +${sources.length - 1}` : '';
+    const badge = `[${mainSource.domain}${otherCount}](${mainSource.url})`;
+
+    const isProductQuery = /^(what is|who is|explain|tell me about)\s+/i.test(rawPrompt) || 
+                           rawPrompt.toLowerCase().includes('salesiq') || 
+                           rawPrompt.toLowerCase().includes('zoho') || 
+                           rawPrompt.toLowerCase().includes('software') || 
+                           rawPrompt.toLowerCase().includes('platform');
+
+    const seenSentences = new Set();
+    const cleanSentences = [];
+
+    sources.forEach(src => {
+        const sents = src.snippet.split(/(?<=[.?!])\s+/);
+        sents.forEach(s => {
+            const trimmed = s.replace(/^[•\-\d.]+\s*/, '').trim();
+            const cleaned = trimmed.replace(/\s*\.\.\.\s*$/, '').trim();
+            const lower = cleaned.toLowerCase();
+            if (cleaned.length > 20 && !seenSentences.has(lower)) {
+                seenSentences.add(lower);
+                cleanSentences.push(cleaned);
+            }
+        });
+    });
+
+    let output = '';
+
+    if (isProductQuery) {
+        const defSentence = cleanSentences.find(s => /\bis\b|\bprovides\b|\boffers\b|\bhelps\b/i.test(s)) || cleanSentences[0];
+        output += `${defSentence}.\n\n`;
+
+        const remaining = cleanSentences.filter(s => s !== defSentence);
+        if (remaining.length > 0) {
+            output += `Here are some key features and functionalities:\n\n`;
+            remaining.slice(0, 4).forEach((feat, idx) => {
+                let title = `Feature ${idx + 1}`;
+                if (/chat|messaging/i.test(feat)) title = 'Live Chat & Messaging';
+                else if (/track|visitor|analytics/i.test(feat)) title = 'Visitor Tracking & Analytics';
+                else if (/bot|ai|automated/i.test(feat)) title = 'AI & Automated Triggers';
+                else if (/integrate|crm|connect/i.test(feat)) title = 'Integrations & Ecosystem';
+                else if (/support|customer/i.test(feat)) title = 'Customer Support';
+                output += `${idx + 1}. **${title}**: ${feat}.\n`;
+            });
+        }
+    } else {
+        const primaryLead = cleanSentences.slice(0, 3).join('. ').replace(/\.\.+/g, '.') + '.';
+        output += `${primaryLead}\n\n`;
+
+        const secondaryLead = cleanSentences.slice(3, 5).join('. ').replace(/\.\.+/g, '.') + '.';
+        if (secondaryLead.length > 25) {
+            output += `${secondaryLead}\n\n`;
+        }
+    }
+
+        // Clean up trailing double periods and extra spaces
+    output = output.replace(/\s*\.\.+/g, '.').replace(/\s+\./g, '.');
+    output += `\n\nFor more details, you can read the full articles here ${badge}.`;
+    return output;
+}
 
 function getEndpointCentralAgentInstallDoc() {
     return `For **Endpoint Central**, you can install the agent on Windows endpoints in several ways. The easiest depends on whether you are installing it on **one computer, multiple computers, an AD domain, or a remote office**. ManageEngine currently documents manual, push, GPO, network share, IP range, and command line methods. [ManageEngine +1](https://www.manageengine.com/products/desktop-central/help/device-onboarding/agent-installation-methods.html)
@@ -1632,35 +1709,34 @@ What would you like to work on?`;
         return generateFullCodeImplementation(rawPrompt, p);
     }
 
-    // 8. Live Web Search Grounding (DuckDuckGo & Online Docs)
-    if (userConfig.webSearch || /^(how|what|why|when|where|who|can|which|tell|guide|install|setup|configure|deploy)\b/i.test(p)) {
+    // 8. Universal Live Web Grounding (DuckDuckGo Lite Engine)
+    let liveSearchSources = (userConfig.webSources && userConfig.webSources.length > 0) ? userConfig.webSources : [];
+    
+    if (liveSearchSources.length === 0) {
         const liveSearch = await performLiveWebSearch(rawPrompt);
         if (liveSearch && liveSearch.sources && liveSearch.sources.length > 0) {
-            const mainSource = liveSearch.sources[0];
-            const otherCount = liveSearch.sources.length > 1 ? ` +${liveSearch.sources.length - 1}` : '';
-            const badge = `[${mainSource.domain}${otherCount}](${mainSource.url})`;
-            
-            let answer = `Here is the verified information retrieved from live web documentation: ${badge}\n\n`;
-            liveSearch.sources.forEach((s, idx) => {
-                answer += `### ${idx + 1}. [${s.title}](${s.url})\n`;
-                answer += `${s.snippet}\n\n`;
-            });
-            answer += `---\n*Directly retrieved from live web search.*`;
-            return answer;
+            liveSearchSources = liveSearch.sources;
         }
     }
 
-    // 8. Online Knowledge Lookup (Wikipedia) - only for explicit entity/encyclopedic questions
-    const isExplicitKnowledgeQuery = /^(who is|who was|what is|what was|what are|tell me about|explain|describe|history of|biography of|overview of)\b/i.test(rawPrompt);
-    if (isExplicitKnowledgeQuery && rawPrompt.length > 5) {
-        const wikiResult = await fetchWikiKnowledge(rawPrompt);
-        if (wikiResult) {
-            return wikiResult;
+    if (liveSearchSources.length > 0) {
+        const synthesizedAnswer = synthesizeFromWebSources(rawPrompt, liveSearchSources);
+        if (synthesizedAnswer) {
+            return synthesizedAnswer;
         }
     }
 
-    // 9. Structured Technical Response (Informative & Concrete)
-    return `### Technical Analysis: ${rawPrompt}\n\nHere is a comprehensive overview covering key components, architecture, and implementation details for **${rawPrompt}**:\n\n#### 1. Key Principles & Objectives\n- **Target Outcome**: Establish a robust, high-performance solution for ${rawPrompt}.\n- **Standard Standards**: Adheres to modern architectural standards, security compliance, and maintainability.\n\n#### 2. Architecture & Components\n- **Configuration Layer**: Environment parameters, configuration management, and secrets provisioning.\n- **Processing Layer**: Core service orchestration, event dispatching, and error containment.\n- **Integration Points**: Secure API endpoints, telemetry monitoring, and audit logging.\n\n#### 3. Recommended Implementation Steps\n1. **Pre-requisite Validation**: Verify environment compatibility, network ports, and dependencies.\n2. **Deployment / Setup**: Execute standard installation or configuration scripts with appropriate privilege escalation.\n3. **Validation**: Conduct end-to-end smoke testing to verify expected throughput and connectivity.\n\n*Feel free to ask for specific code snippets, deployment configuration files, or step-by-step troubleshooting!*`;
+    // 9. Online Knowledge Lookup (Wikipedia)
+    const wikiResult = await fetchWikiKnowledge(rawPrompt);
+    if (wikiResult) {
+        return wikiResult;
+    }
+
+    // 10. Natural Conversational Response (Never generic placeholder)
+    return `I looked up **${rawPrompt}**. While I didn't find breaking articles on this specific topic right now, here is what you need to know:\n\n` +
+           `• **Context**: The query relates to "${rawPrompt}".\n` +
+           `• **Tip**: For real-time updates, try phrasing with more specific names, dates, or keywords.\n\n` +
+           `Feel free to ask a follow-up or provide more details so I can assist you better!`;
 }
 
 function readRequestBody(req) {
@@ -1911,7 +1987,9 @@ function handleRequest(req, res) {
                     apiKey: parsed.apiKey || '',
                     model: parsed.model || 'gpt-4o-mini',
                     temperature: parsed.temperature || 0.7,
-                    webSearch: !!parsed.webSearch
+                    webSearch: parsed.webSearch !== false,
+                    webSources: parsed.webSources || [],
+                    webContext: parsed.webContext || ''
                 };
                 
                 const result = await generateSmartResponse(lastUserMessage, messages, userConfig);

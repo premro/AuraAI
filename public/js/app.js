@@ -806,6 +806,8 @@ async function sendMessage() {
                         model: state.selectedModel,
                         temperature: state.temperature,
                         webSearch: state.webSearch,
+                        webSources: liveWebSources,
+                        webContext: liveWebContext,
                         apiKey: state.apiKey || localStorage.getItem('localai_api_key') || ''
                     })
                 });
