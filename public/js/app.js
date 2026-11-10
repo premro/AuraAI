@@ -795,57 +795,8 @@ async function sendMessage() {
                 }
             }
 
-            // 1. Puter.ai: Real-time frontier AI streaming for gpt-4o-mini
-            const isPuterEligible = state.selectedModel === 'gpt-4o-mini';
-
-            // Route Endpoint Central queries or News directly to server for verified documentation & citations
-            const routeToServerFirst = isNewsRequest || isEndpointCentralAgent;
-
-            if (!routeToServerFirst && isPuterEligible && window.puter?.ai?.chat) {
-                try {
-                    let puterSystem = state.systemPrompt;
-                    if (liveWebSources.length > 0) {
-                        const s0 = liveWebSources[0];
-                        const countStr = liveWebSources.length > 1 ? ` +${liveWebSources.length - 1}` : '';
-                        puterSystem += `\n\n[REAL-TIME LIVE WEB SEARCH RESULTS]\n${liveWebContext}\n\nINSTRUCTIONS: You have live internet search capability. Use the live web results above to provide exact official steps, commands, and links. Include the citation badge [${s0.domain}${countStr}](${s0.url}) in your response.`;
-                    }
-
-                    const puterMessages = [
-                        { role: 'system', content: puterSystem },
-                        ...currentChat.messages.map(m => ({ role: m.role, content: m.content }))
-                    ];
-
-                    const responseStream = await window.puter.ai.chat(puterMessages, {
-                        model: 'gpt-4o-mini',
-                        stream: true
-                    });
-
-                    let streamedTokens = '';
-                    for await (const chunk of responseStream) {
-                        if (state.abortController?.signal?.aborted) break;
-                        const token = chunk?.text || (typeof chunk === 'string' ? chunk : '');
-                        if (token) {
-                            streamedTokens += token;
-                            updateMessageContent(assistantBubble, streamedTokens, true);
-                        }
-                    }
-
-                    // If Puter outputs an external upgrade / pricing link, reject it and fallback to server
-                    if (/puter\.com|upgrade|purchase credits|pricing|sign up|sign-in/i.test(streamedTokens)) {
-                        console.warn('[LocalAI] Puter output contained promotional links. Falling back to server engine.');
-                        fullResponse = '';
-                        receivedTokens = false;
-                    } else if (streamedTokens.trim().length > 0) {
-                        fullResponse = streamedTokens;
-                        receivedTokens = true;
-                    }
-                } catch (puterErr) {
-                    console.warn('[LocalAI] Puter.ai streaming failed, using server fallback:', puterErr);
-                }
-            }
-
-            // 2. Fallback or News to local server /api/instant-chat
-            if (!receivedTokens && !state.abortController?.signal?.aborted) {
+            // Direct AI Chat to /api/instant-chat (100% Private, Zero External Popups, No Third-Party Sign-In)
+            if (!state.abortController?.signal?.aborted) {
                 const response = await fetch('/api/instant-chat', {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },

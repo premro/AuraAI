@@ -1243,6 +1243,10 @@ function readRequestBody(req) {
 let indexHtmlCache = '';
 let cssCache = '';
 let jsCache = '';
+let faviconSvgCache = '';
+let logoSvgCache = '';
+let faviconIcoCache = null;
+let appleTouchIconCache = null;
 
 try {
     indexHtmlCache = fs.readFileSync(path.join(__dirname, 'index.html'), 'utf-8');
@@ -1260,6 +1264,30 @@ try {
     jsCache = fs.readFileSync(path.join(__dirname, 'js', 'app.js'), 'utf-8');
 } catch (e) {
     try { jsCache = fs.readFileSync(path.join(process.cwd(), 'js', 'app.js'), 'utf-8'); } catch (e2) {}
+}
+
+try {
+    faviconSvgCache = fs.readFileSync(path.join(__dirname, 'favicon.svg'), 'utf-8');
+} catch (e) {
+    try { faviconSvgCache = fs.readFileSync(path.join(process.cwd(), 'favicon.svg'), 'utf-8'); } catch (e2) {}
+}
+
+try {
+    logoSvgCache = fs.readFileSync(path.join(__dirname, 'logo.svg'), 'utf-8');
+} catch (e) {
+    try { logoSvgCache = fs.readFileSync(path.join(process.cwd(), 'logo.svg'), 'utf-8'); } catch (e2) {}
+}
+
+try {
+    faviconIcoCache = fs.readFileSync(path.join(__dirname, 'favicon.ico'));
+} catch (e) {
+    try { faviconIcoCache = fs.readFileSync(path.join(process.cwd(), 'favicon.ico')); } catch (e2) {}
+}
+
+try {
+    appleTouchIconCache = fs.readFileSync(path.join(__dirname, 'apple-touch-icon.png'));
+} catch (e) {
+    try { appleTouchIconCache = fs.readFileSync(path.join(process.cwd(), 'apple-touch-icon.png')); } catch (e2) {}
 }
 
 function getRequestPath(req) {
@@ -1303,6 +1331,26 @@ function handleRequest(req, res) {
     if (pathname === '/js/app.js') {
         res.writeHead(200, { 'Content-Type': 'application/javascript; charset=utf-8' });
         res.end(jsCache);
+        return;
+    }
+    if (pathname === '/favicon.svg') {
+        res.writeHead(200, { 'Content-Type': 'image/svg+xml' });
+        res.end(faviconSvgCache);
+        return;
+    }
+    if (pathname === '/logo.svg') {
+        res.writeHead(200, { 'Content-Type': 'image/svg+xml' });
+        res.end(logoSvgCache);
+        return;
+    }
+    if (pathname === '/favicon.ico') {
+        res.writeHead(200, { 'Content-Type': 'image/x-icon' });
+        res.end(faviconIcoCache);
+        return;
+    }
+    if (pathname === '/apple-touch-icon.png' || pathname === '/favicon-32x32.png' || pathname === '/favicon-16x16.png' || pathname === '/favicon.png') {
+        res.writeHead(200, { 'Content-Type': 'image/png' });
+        res.end(appleTouchIconCache);
         return;
     }
 

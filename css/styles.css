@@ -1322,3 +1322,82 @@ body.light-theme .user-message-text a {
         grid-template-columns: 1fr;
     }
 }
+
+/* ==========================================
+   Official AuraAI Brand & Logo Elements
+   ========================================== */
+.sidebar-brand-row {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    width: 100%;
+    margin-bottom: 10px;
+    padding: 2px 2px 4px;
+}
+
+.sidebar-brand {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+}
+
+.brand-logo-img {
+    width: 30px;
+    height: 30px;
+    border-radius: 8px;
+    object-fit: contain;
+    box-shadow: 0 0 14px rgba(0, 242, 254, 0.45);
+    background: #0a0c1a;
+}
+
+.brand-text {
+    font-size: 19px;
+    font-weight: 700;
+    letter-spacing: -0.5px;
+    line-height: 1;
+}
+
+.brand-aura {
+    color: #00f2fe;
+    background: linear-gradient(135deg, #00f2fe 20%, #38bdf8 80%);
+    -webkit-background-clip: text;
+    -webkit-text-fill-color: transparent;
+    font-weight: 700;
+}
+
+.brand-ai {
+    color: #e879f9;
+    background: linear-gradient(135deg, #c084fc 20%, #e879f9 80%);
+    -webkit-background-clip: text;
+    -webkit-text-fill-color: transparent;
+    font-weight: 700;
+}
+
+.topbar-brand {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    margin-right: 6px;
+}
+
+.topbar-logo-img {
+    width: 26px;
+    height: 26px;
+    border-radius: 7px;
+    object-fit: contain;
+    box-shadow: 0 0 10px rgba(0, 242, 254, 0.35);
+}
+
+.topbar-brand-title {
+    font-size: 16px;
+    font-weight: 700;
+    letter-spacing: -0.4px;
+}
+
+.welcome-hero-logo {
+    width: 72px;
+    height: 72px;
+    border-radius: 18px;
+    object-fit: contain;
+    box-shadow: 0 0 28px rgba(0, 242, 254, 0.55), 0 0 45px rgba(168, 85, 247, 0.35);
+}

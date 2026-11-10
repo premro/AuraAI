@@ -4,7 +4,7 @@
   "description": "AuraAI - ChatGPT Web & Local AI Assistant with high-resolution Image Generation, Multi-Turn Context Memory, Chat Pinning, Document/Excel Analysis, and Local WebGPU execution. 100% Free, Private, and Zero Sign-in.",
   "main": "server.js",
   "scripts": {
-    "build": "mkdir -p public && cp -r index.html css js public/",
+    "build": "mkdir -p public && cp -r index.html css js *.svg *.ico *.png public/ 2>/dev/null || true",
     "start": "node server.js",
     "test": "node -c server.js"
   },
