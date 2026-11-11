@@ -37,5 +37,14 @@ const base = { callGeminiAPI: gem, userConfig: { apiKey: 'AIzaTEST' } };
   assert(/net worth/.test(r.response) && r.capability === 'web_research', 'F ' + r.response + r.capability);
   // G: wrong default model fixed for Gemini
   assert(!/gpt/.test(r.model), 'G model ' + r.model);
-  console.log('ALL TESTS PASSED');
+    // H: "how install endpoint central agent" without API key returns verified guide
+  const server = require('./server');
+  r = await orchestrateRequest({
+    prompt: 'how install endpoint central agent',
+    history: [],
+    userConfig: { apiKey: '' },
+    generateSmartResponseFallback: server.generateSmartResponse
+  });
+  assert(r.response && r.response.includes('Endpoint Central') && r.verifiedOnline && r.capability === 'web_research', 'H: endpoint central install');
+  console.log('ALL TESTS PASSED (A through H)');
 })().catch(e => { console.error('FAIL', e.message); process.exit(1); });

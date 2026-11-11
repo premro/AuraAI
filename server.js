@@ -1486,7 +1486,7 @@ if (isImage) {
 function resolveConversationContext(rawPrompt, history = []) {
     const p = (rawPrompt || '').toLowerCase().trim();
     // Exclude the current last user message to inspect actual prior context
-    const prevTurns = (history || []).slice(0, -1);
+    const prevTurns = (Array.isArray(history) ? history : []).slice(0, -1);
 
     // If no prior turns exist (brand new chat)
     if (prevTurns.length === 0) {

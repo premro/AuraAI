@@ -1,5 +1,4 @@
 'use strict';
-
 const CAPABILITIES = {
   NORMAL_CHAT: 'normal_chat',
   WEB_RESEARCH: 'web_research',
@@ -36,8 +35,8 @@ function analyzeRequest(text, history = [], attachments = []) {
     }
   }
 
-  // Live data: only for short messages, whole words only (typos are fixed by the rewrite step)
-  if (!isLong && /\b(net worth|latest|today|current|news|stock price|release date|weather)\b/i.test(t)) {
+  // Live data & technical verification: short messages with temporal or product/install queries
+  if (!isLong && /\b(net worth|latest|today|current|news|stock price|release date|weather|install|setup|configure|troubleshoot|how to|guide|agent)\b/i.test(t)) {
     return { capability: CAPABILITIES.WEB_RESEARCH, query: t };
   }
 

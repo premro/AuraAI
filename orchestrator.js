@@ -11,8 +11,9 @@ function pickProvider(key) {
 
 async function orchestrateRequest({
   prompt, history = [], attachments = [], userConfig = {}, conversationId = 'default',
-  callGeminiAPI, callOpenAIAPI, webSearch, generateBuiltInSmartKnowledge
+  callGeminiAPI, callOpenAIAPI, webSearch, generateBuiltInSmartKnowledge, generateSmartResponseFallback
 }) {
+  const smartFallback = generateBuiltInSmartKnowledge || generateSmartResponseFallback;
   const rawPrompt = H.stripPrefix(prompt);
   const apiKey = (userConfig.apiKey || process.env.GEMINI_API_KEY || process.env.OPENAI_API_KEY || '').trim();
   const provider = pickProvider(apiKey);
@@ -25,7 +26,6 @@ async function orchestrateRequest({
 
   async function callModel(system, text, hist) {
     try {
-      // Assumes the 5th argument is the system instruction. Adjust to your helper's signature.
       if (provider === 'gemini' && callGeminiAPI) return await callGeminiAPI(apiKey, text, hist, model, system);
       if (provider === 'openai' && callOpenAIAPI) return await callOpenAIAPI(apiKey, text, hist, model, system);
     } catch (e) {
@@ -51,12 +51,27 @@ async function orchestrateRequest({
   const route = analyzeRequest(userText, prior, attachments);
   debug.capability = route.capability;
 
-  // 4. Optional live search (only for live-data questions)
+  // 4. Optional live search (only for live-data questions or technical verification)
   let system = H.SYSTEM_PROMPT;
-  if (route.capability === CAPABILITIES.WEB_RESEARCH && typeof webSearch === 'function') {
+  let searchResults = null;
+  let activeWebSearch = webSearch;
+  if (!activeWebSearch && typeof require !== 'undefined') {
     try {
-      const results = await webSearch(userText);
-      if (results) system += `\n\nSEARCH RESULTS for "${userText}":\n${results}\nUse these for current facts and say if they do not contain the answer.`;
+      const webRetrieval = require('./webRetrieval');
+      activeWebSearch = async (q) => {
+        const res = await webRetrieval.executeWebRetrievalPipeline(q);
+        if (res && res.answer && !res.answer.includes('could not find a sufficiently relevant')) {
+          return res.answer;
+        }
+        return res ? (res.webContext || null) : null;
+      };
+    } catch (e) {}
+  }
+
+  if (route.capability === CAPABILITIES.WEB_RESEARCH && typeof activeWebSearch === 'function') {
+    try {
+      searchResults = await activeWebSearch(userText);
+      if (searchResults) system += `\n\nSEARCH RESULTS for "${userText}":\n${searchResults}\nUse these for current facts and say if they do not contain the answer.`;
     } catch (e) { debug.searchError = e.message; }
   }
   if (repeated) system += '\n\nThe user repeated their previous message. Do not repeat your earlier answer word for word. Improve it, or ask what they want changed.';
@@ -78,9 +93,12 @@ async function orchestrateRequest({
   if (!reply) {
     const needsModel = H.looksLikeCode(userText) || route.capability === CAPABILITIES.SUMMARIZE ||
       route.capability === CAPABILITIES.IMAGE_UNDERSTANDING;
-    if (!needsModel && typeof generateBuiltInSmartKnowledge === 'function') {
-      const b = generateBuiltInSmartKnowledge(userText, conversationId);
-      if (b) return { response: b, provider: 'Built-in knowledge', model, capability: route.capability, debug };
+    if (!needsModel && typeof smartFallback === 'function') {
+      const b = await smartFallback(userText, prior, { conversationId, apiKey, model });
+      if (b) return { response: b, provider: 'Built-in knowledge', model, capability: route.capability, verifiedOnline: true, debug };
+    }
+    if (!needsModel && searchResults) {
+      return { response: searchResults, provider: 'Web Search Grounding', model, capability: route.capability, verifiedOnline: true, debug };
     }
     const why = !apiKey ? 'no API key is configured'
       : !provider ? 'the API key format is not recognised'
@@ -92,7 +110,7 @@ async function orchestrateRequest({
   }
 
   const label = provider === 'gemini' ? 'Google Gemini' : 'Frontier AI';
-  return { response: reply, provider: label, model, capability: route.capability, debug };
+  return { response: reply, provider: label, model, capability: route.capability, verifiedOnline: !!searchResults, debug };
 }
 
 module.exports = { orchestrateRequest };
