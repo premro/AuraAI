@@ -839,7 +839,6 @@ async function sendMessage() {
 
             // Update transparent processing status
             const hasAttachments = currentAttachments && currentAttachments.length > 0;
-            const hasDirectUrl = /https?:\/\/[^\s]+/i.test(text);
             const isDoc = hasAttachments && currentAttachments.some(a => a.type?.includes('pdf') || a.name?.match(/\.(pdf|docx|xlsx|txt|csv|pptx)$/i));
             const isImg = hasAttachments && currentAttachments.some(a => a.type?.startsWith('image/') || a.dataUrl);
 
