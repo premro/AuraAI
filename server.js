@@ -1783,6 +1783,45 @@ async function generateSmartResponse(prompt, history = [], userConfig = {}) {
         }
     }
 
+    // 1b. Code Generation
+    if (route.capability === 'code') {
+        const isPowerShell = /powershell/i.test(rawPrompt) || /ps1/i.test(rawPrompt);
+        const isLogFiles = /\.log|log files/i.test(rawPrompt);
+        const isLargeFiles = /large files|size/i.test(rawPrompt);
+
+        if (isPowerShell && isLogFiles) {
+            return '### 💻 PowerShell Script to Find `.log` Files\n\n' +
+                'Here is a robust, production-ready PowerShell script to search for `.log` files recursively:\n\n' +
+                '```powershell\n' +
+                'param (\n' +
+                '    [string]$Path = "C:\\Logs",\n' +
+                '    [int]$DaysOld = 7\n' +
+                ')\n\n' +
+                '# Find all .log files with error suppression for protected system directories\n' +
+                'Get-ChildItem -Path $Path -Filter "*.log" -Recurse -File -ErrorAction SilentlyContinue |\n' +
+                '    Select-Object FullName, @{Name="SizeMB"; Expression={[math]::round($_.Length / 1MB, 2)}}, LastWriteTime |\n' +
+                '    Sort-Object LastWriteTime -Descending |\n' +
+                '    Format-Table -AutoSize\n' +
+                '```\n\n' +
+                '- **Filter**: `*.log` files\n' +
+                '- **Safety**: Skips permission-denied directories safely\n' +
+                '- **Output**: Displays full path, size in MB, and last modified date.';
+        } else if (isPowerShell && isLargeFiles) {
+            return '### 💻 PowerShell Script to Find Large Files\n\n' +
+                '```powershell\n' +
+                'param (\n' +
+                '    [string]$Path = "C:\\",\n' +
+                '    [int]$MinSizeMB = 100\n' +
+                ')\n\n' +
+                'Get-ChildItem -Path $Path -Recurse -File -ErrorAction SilentlyContinue |\n' +
+                '    Where-Object { $_.Length -gt ($MinSizeMB * 1MB) } |\n' +
+                '    Select-Object FullName, @{Name="SizeMB"; Expression={[math]::round($_.Length / 1MB, 2)}}, LastWriteTime |\n' +
+                '    Sort-Object Length -Descending |\n' +
+                '    Format-Table -AutoSize\n' +
+                '```';
+        }
+    }
+
     // 2. Image Generation & Image Editing
     if (route.capability === 'image_generation' || route.capability === 'image_editing') {
         let subject = rawPrompt;
@@ -1831,7 +1870,7 @@ async function generateSmartResponse(prompt, history = [], userConfig = {}) {
 
     // 4. Web Search Pipeline (ONLY when route.capability is web_search)
     if (route.capability === 'web_search') {
-        const retrievalResult = await webRetrieval.executeWebRetrievalPipeline(rawPrompt, { conversationId });
+        const retrievalResult = await webRetrieval.executeWebRetrievalPipeline(route.query || rawPrompt, { conversationId });
 
         if (retrievalResult) {
             if (retrievalResult.confidence === 'LOW') {
@@ -2478,7 +2517,8 @@ function handleRequest(req, res) {
                     provider: result.provider || 'AuraAI Engine',
                     verifiedOnline: !!result.verifiedOnline,
                     model: result.model || userConfig.model,
-                    capability: result.capability
+                    capability: result.capability,
+                    debug: result.debug
                 }));
             } catch (err) {
                 res.writeHead(500, { 'Content-Type': 'application/json' });

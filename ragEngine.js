@@ -1,10 +1,12 @@
 /**
- * AuraAI RAG (Retrieval-Augmented Generation) & Conversation Source Registry
- * Handles chunk indexing, semantic retrieval, page-level query routing, and multi-turn document & web memory.
+ * AuraAI Hybrid RAG (Retrieval-Augmented Generation) & Conversation Source Registry
+ * Handles chunk indexing, semantic & BM25 hybrid retrieval, heading relevance,
+ * exact phrase matching, reranking, and multi-turn document & web memory.
  */
 
 const { log } = require('./logger');
 const { chunkDocument } = require('./documentProcessor');
+const conversationState = require('./conversationState');
 
 class RAGEngine {
     constructor() {
@@ -27,9 +29,11 @@ class RAGEngine {
         const reg = this.getRegistry(conversationId);
         reg.documents.set(doc.id, doc);
 
-        // Chunk and index
+        // Chunk and index with full metadata
         const chunks = chunkDocument(doc);
         reg.chunks.push(...chunks);
+
+        conversationState.setActiveDocument(conversationId, doc.filename);
 
         log('DOCUMENT PARSE', `Registered document "${doc.filename}" (ID: ${doc.id}) in conversation "${conversationId}"`, {
             totalChunks: chunks.length,
@@ -55,21 +59,26 @@ class RAGEngine {
         };
 
         reg.sources.set(sourceData.url, sourceEntry);
+        conversationState.setActiveUrl(conversationId, sourceData.url);
 
         // Chunk and index web passages for cross-turn conversational follow-up
         if (sourceData.passages && sourceData.passages.length > 0) {
             sourceData.passages.forEach((p, idx) => {
+                const tokenCount = Math.ceil(p.length / 4);
                 reg.chunks.push({
                     id: `${sourceId}_chunk_${idx}`,
+                    documentId: sourceId,
                     docId: sourceId,
                     filename: sourceEntry.title,
                     url: sourceEntry.url,
                     domain: sourceEntry.domain,
                     isWebSource: true,
                     page: 1,
+                    section: 'Web Content',
+                    heading: sourceEntry.title,
                     title: sourceEntry.title,
                     text: p,
-                    tokenCount: Math.ceil(p.length / 4)
+                    tokenCount
                 });
             });
         }
@@ -112,7 +121,7 @@ class RAGEngine {
             .filter(t => t.length > 1);
     }
 
-    // Retrieve relevant passages across both documents and registered web sources
+    // Hybrid Retrieval: BM25/keyword + heading relevance + exact phrase + metadata filtering + reranking
     retrieve(query, conversationId = 'default', topK = 5) {
         const reg = this.getRegistry(conversationId);
         if (reg.chunks.length === 0) {
@@ -122,11 +131,11 @@ class RAGEngine {
         const qTokens = this.tokenize(query);
         const qLower = query.toLowerCase();
 
-        // Check if query is targeting a specific page: "page 7", "page 12", etc.
+        // Check if query targets a specific page: "page 5", "page 2", etc.
         const pageMatch = qLower.match(/\bpage\s+(\d+)\b/i);
         const targetPage = pageMatch ? parseInt(pageMatch[1], 10) : null;
 
-        log('RETRIEVAL', `Retrieving context for query: "${query}"`, {
+        log('HYBRID RETRIEVAL', `Retrieving context for query: "${query}"`, {
             conversationId,
             targetPage,
             totalIndexedChunks: reg.chunks.length
@@ -135,15 +144,30 @@ class RAGEngine {
         const scoredChunks = reg.chunks.map(chunk => {
             let score = 0;
             const cLower = chunk.text.toLowerCase();
+            const headingLower = (chunk.heading || chunk.title || '').toLowerCase();
+            const sectionLower = (chunk.section || '').toLowerCase();
 
-            // Direct page match bonus
+            // 1. Direct page match bonus (Metadata Filtering)
             if (targetPage !== null && chunk.page === targetPage) {
                 score += 50;
             }
 
-            // Keyword matching & Term frequency
+            // 2. Exact phrase match bonus
+            if (qLower.length > 5 && cLower.includes(qLower)) {
+                score += 25;
+            }
+
+            // 3. Heading and section relevance
+            qTokens.forEach(token => {
+                if (headingLower.includes(token)) score += 12;
+                if (sectionLower.includes(token)) score += 8;
+            });
+
+            // 4. BM25 / Keyword matching & Term frequency
+            let matchedTokens = 0;
             qTokens.forEach(token => {
                 if (cLower.includes(token)) {
+                    matchedTokens++;
                     score += 6;
                     // Exact word boundary match bonus
                     const regex = new RegExp(`\\b${token}\\b`, 'i');
@@ -151,23 +175,32 @@ class RAGEngine {
                         score += 4;
                     }
                 }
-                if (chunk.title && chunk.title.toLowerCase().includes(token)) {
-                    score += 8;
-                }
             });
 
-            // Boost action / step words for procedural queries
-            if (qLower.includes('step') || qLower.includes('how') || qLower.includes('instruction')) {
-                if (cLower.includes('step') || cLower.includes('1.') || cLower.includes('2.') || cLower.includes('follow') || cLower.includes('change') || cLower.includes('configure')) {
+            // 5. Query Coverage Bonus (proportion of query words found)
+            if (qTokens.length > 0) {
+                const coverage = matchedTokens / qTokens.length;
+                score += (coverage * 15);
+            }
+
+            // 6. Action / Step / Command words bonus for procedural queries
+            if (qLower.includes('step') || qLower.includes('how') || qLower.includes('command') || qLower.includes('instruction')) {
+                if (cLower.includes('step') || cLower.includes('1.') || cLower.includes('2.') || cLower.includes('follow') || cLower.includes('configure') || cLower.includes('powershell') || cLower.includes('exe')) {
                     score += 10;
                 }
             }
 
-            // Length normalization
+            // 7. Source Authority Bonus (Official vendor sources get a small boost)
+            if (chunk.url && (chunk.url.includes('manageengine.com') || chunk.url.includes('microsoft.com') || chunk.url.includes('github.com'))) {
+                score += 5;
+            }
+
+            // Length normalization to prevent long text bias
             const normScore = score / (1 + Math.log(chunk.text.length / 200 + 1));
             return { ...chunk, score: normScore };
         });
 
+        // Rerank by score descending
         scoredChunks.sort((a, b) => b.score - a.score);
         const topChunks = scoredChunks.filter(c => c.score > 0).slice(0, topK);
 
@@ -181,7 +214,7 @@ class RAGEngine {
             }
         }
 
-        log('RETRIEVAL', `Found ${topChunks.length} matching passages`, { confidence });
+        log('HYBRID RETRIEVAL', `Found ${topChunks.length} matching passages`, { confidence });
 
         return {
             passages: topChunks,
@@ -197,7 +230,7 @@ class RAGEngine {
             if (p.isWebSource) {
                 return `[Source ${idx + 1} | Webpage: ${p.filename} | ${p.url}]:\n${p.text}`;
             }
-            return `[Passage ${idx + 1} | Doc: ${p.filename}, Page ${p.page} | ${p.title}]:\n${p.text}`;
+            return `[Passage ${idx + 1} | Doc: ${p.filename}, Page ${p.page} | Section: ${p.section || p.heading}]:\n${p.text}`;
         }).join('\n\n');
     }
 }

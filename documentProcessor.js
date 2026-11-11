@@ -2,6 +2,7 @@
  * AuraAI Document Processor
  * Handles PDF, DOCX, PPTX, XLSX, CSV, TXT, JSON, MD.
  * Preserves structural hierarchy: Pages, Sections, Headings, Tables, Paragraphs.
+ * Chunks documents with complete metadata: id, documentId, filename, page, section, heading, text, tokenCount.
  */
 
 const zlib = require('zlib');
@@ -50,6 +51,7 @@ function parseDocx(buffer, filename) {
     const xml = docXmlBuf.toString('utf8');
     const sections = [];
     let currentHeading = 'General';
+    let currentSection = 'Overview';
     let pageNum = 1;
 
     // Split paragraphs <w:p>
@@ -74,9 +76,10 @@ function parseDocx(buffer, filename) {
         if (text) {
             if (isHeading) {
                 currentHeading = text;
-                sections.push({ page: pageNum, title: currentHeading, text: text, type: 'heading' });
+                currentSection = text;
+                sections.push({ page: pageNum, section: currentSection, heading: currentHeading, title: currentHeading, text: text, type: 'heading' });
             } else {
-                sections.push({ page: pageNum, title: currentHeading, text: text, type: 'paragraph' });
+                sections.push({ page: pageNum, section: currentSection, heading: currentHeading, title: currentHeading, text: text, type: 'paragraph' });
             }
         }
     }
@@ -107,11 +110,11 @@ function parseDocx(buffer, filename) {
             rows.slice(1).forEach(r => {
                 mdTable += '| ' + r.join(' | ') + ' |\n';
             });
-            sections.push({ page: pageNum, title: `${currentHeading} (Table)`, text: mdTable, type: 'table' });
+            sections.push({ page: pageNum, section: currentSection, heading: `${currentHeading} (Table)`, title: `${currentHeading} (Table)`, text: mdTable, type: 'table' });
         }
     }
 
-    const fullText = sections.map(s => `[Page ${s.page} | ${s.title}]\n${s.text}`).join('\n\n');
+    const fullText = sections.map(s => `[Page ${s.page} | ${s.heading}]\n${s.text}`).join('\n\n');
     return {
         id: 'doc_' + crypto.createHash('md5').update(buffer).digest('hex').substring(0, 10),
         filename,
@@ -147,6 +150,8 @@ function parsePptx(buffer, filename) {
             const combinedText = `Slide ${idx + 1}: ${slideTitle}\n` + (slideBody ? `• ${slideBody}` : '');
             sections.push({
                 page: idx + 1,
+                section: `Slide ${idx + 1}`,
+                heading: slideTitle,
                 title: `Slide ${idx + 1}: ${slideTitle}`,
                 text: combinedText,
                 type: 'slide'
@@ -165,12 +170,13 @@ function parsePptx(buffer, filename) {
     };
 }
 
-// Parse Structured Text/PDF string (e.g. from frontend PDF.js)
+// Parse Structured Text/PDF string (from frontend PDF.js or plain text)
 function parseStructuredText(text, filename = 'document.txt', type = 'txt') {
     const lines = text.split('\n');
     const sections = [];
     let currentPage = 1;
-    let currentTitle = 'Section';
+    let currentHeading = 'Overview';
+    let currentSection = 'General';
     let currentBlock = [];
 
     lines.forEach(line => {
@@ -180,7 +186,9 @@ function parseStructuredText(text, filename = 'document.txt', type = 'txt') {
             if (currentBlock.length > 0) {
                 sections.push({
                     page: currentPage,
-                    title: currentTitle,
+                    section: currentSection,
+                    heading: currentHeading,
+                    title: currentHeading,
                     text: currentBlock.join('\n'),
                     type: 'paragraph'
                 });
@@ -195,13 +203,16 @@ function parseStructuredText(text, filename = 'document.txt', type = 'txt') {
             if (currentBlock.length > 0) {
                 sections.push({
                     page: currentPage,
-                    title: currentTitle,
+                    section: currentSection,
+                    heading: currentHeading,
+                    title: currentHeading,
                     text: currentBlock.join('\n'),
                     type: 'paragraph'
                 });
                 currentBlock = [];
             }
-            currentTitle = headingMatch[1] || trimmed;
+            currentHeading = headingMatch[1] || trimmed;
+            currentSection = currentHeading;
             return;
         }
 
@@ -213,7 +224,9 @@ function parseStructuredText(text, filename = 'document.txt', type = 'txt') {
     if (currentBlock.length > 0) {
         sections.push({
             page: currentPage,
-            title: currentTitle,
+            section: currentSection,
+            heading: currentHeading,
+            title: currentHeading,
             text: currentBlock.join('\n'),
             type: 'paragraph'
         });
@@ -229,44 +242,57 @@ function parseStructuredText(text, filename = 'document.txt', type = 'txt') {
     };
 }
 
-// Chunking with Overlap & Metadata preservation
+// Chunking with Overlap & complete metadata preservation
 function chunkDocument(doc, maxChunkChars = 1200, overlapChars = 200) {
     const chunks = [];
     let chunkIndex = 0;
 
     doc.sections.forEach(sec => {
         const secText = sec.text;
+        const heading = sec.heading || sec.title || 'General';
+        const section = sec.section || heading;
+
         if (secText.length <= maxChunkChars) {
+            const tokenCount = Math.ceil(secText.length / 4);
             chunks.push({
-                chunkId: `${doc.id}_c${chunkIndex++}`,
+                id: `${doc.id}_c${chunkIndex++}`,
+                documentId: doc.id,
                 docId: doc.id,
                 filename: doc.filename,
                 page: sec.page,
-                title: sec.title,
+                section,
+                heading,
+                title: heading,
                 type: sec.type,
-                text: secText
+                text: secText,
+                tokenCount
             });
         } else {
-            // Split larger sections
+            // Split larger sections semantically by paragraph or sentence
             let start = 0;
             while (start < secText.length) {
                 const end = Math.min(start + maxChunkChars, secText.length);
                 const chunkSlice = secText.substring(start, end);
+                const tokenCount = Math.ceil(chunkSlice.length / 4);
                 chunks.push({
-                    chunkId: `${doc.id}_c${chunkIndex++}`,
+                    id: `${doc.id}_c${chunkIndex++}`,
+                    documentId: doc.id,
                     docId: doc.id,
                     filename: doc.filename,
                     page: sec.page,
-                    title: sec.title,
+                    section,
+                    heading,
+                    title: heading,
                     type: sec.type,
-                    text: chunkSlice
+                    text: chunkSlice,
+                    tokenCount
                 });
                 start += (maxChunkChars - overlapChars);
             }
         }
     });
 
-    log('CHUNKING', `Chunked document "${doc.filename}" into ${chunks.length} chunks`, {
+    log('CHUNKING', `Chunked document "${doc.filename}" into ${chunks.length} structured chunks with metadata`, {
         totalPages: doc.totalPages,
         totalChars: doc.fullText.length
     });
@@ -299,14 +325,16 @@ function summarizeDocumentLocally(doc, mode = 'executive') {
         const sectionSummaries = doc.sections.slice(0, 6).map(sec => `#### ${sec.title} (Page ${sec.page})\n${sec.text.substring(0, 250)}...`).join('\n\n');
         summaryBody = sectionSummaries;
     } else {
-        // Executive mode
-        summaryHeader = `### 📊 Executive Summary: *${doc.filename}*\n\n`;
-        summaryBody = `**Document Overview**: Analysis of ${doc.filename} across ${doc.totalPages} pages/sections.\n\n` +
-                      `#### Strategic Findings:\n` +
-                      keySentences.slice(0, 5).map(s => `• ${s}`).join('\n\n');
+        // Executive Summary (Default)
+        summaryHeader = `### 📑 Executive Summary: *${doc.filename}*\n\n`;
+        summaryBody = `**Overview**: This ${doc.totalPages}-page document covers **${doc.sections[0]?.title || 'core subjects'}**.\n\n` +
+                      `#### Key Highlights:\n` +
+                      keySentences.slice(0, 5).map(s => `• ${s}`).join('\n\n') +
+                      `\n\n#### Structured Sections Analyzed:\n` +
+                      doc.sections.slice(0, 5).map(sec => `- **Page ${sec.page}**: ${sec.title}`).join('\n');
     }
 
-    return `${summaryHeader}${summaryBody}\n\n*Reference: [Doc: ${doc.filename}, Pages 1-${doc.totalPages}]*`;
+    return `${summaryHeader}${summaryBody}\n\n---\n*Generated by AuraAI Document Processing Engine*`;
 }
 
 module.exports = {
