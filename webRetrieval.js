@@ -1743,40 +1743,8 @@ function isDynamicQuery(query) {
   return dynamicRegex.test(String(query || ''));
 }
 
+// Wikipedia keyword lookup completely disabled: use ONLY real web search
 async function fetchWikiKnowledge(query) {
-  try {
-    const clean = String(query || '')
-      .replace(/^(who is|who was|what is|what was|tell me about|explain|describe|can you explain|what does|how does)\s+/i, '')
-      .replace(/\?+$/, '')
-      .trim();
-    if (!clean || clean.length < 2) return null;
-
-    const controller = new AbortController();
-    const timeoutId = setTimeout(() => controller.abort(), 3500);
-
-    const titleCased = clean.replace(/\b\w/g, l => l.toUpperCase()).replace(/ /g, '_');
-    const sumUrl = `https://en.wikipedia.org/api/rest_v1/page/summary/${encodeURIComponent(titleCased)}`;
-    const sumRes = await fetch(sumUrl, {
-      headers: { 'User-Agent': 'LocalAI/1.0 (Mozilla/5.0)' },
-      signal: controller.signal
-    });
-    clearTimeout(timeoutId);
-
-    if (sumRes.ok) {
-      const page = await sumRes.json();
-      if (page.extract && page.extract.length > 25) {
-        const articleUrl = page.content_urls?.desktop?.page || `https://en.wikipedia.org/wiki/${encodeURIComponent(page.title)}`;
-        return [{
-          title: page.title,
-          url: articleUrl,
-          domain: 'en.wikipedia.org',
-          snippet: page.extract,
-          passages: [page.extract],
-          content: page.extract
-        }];
-      }
-    }
-  } catch (e) {}
   return null;
 }
 

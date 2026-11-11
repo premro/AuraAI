@@ -730,31 +730,7 @@ After installation completes:
 }
 
 function fetchWikiContext(topic = '') {
-    return new Promise((resolve) => {
-        if (!topic || topic.trim().length === 0) return resolve(null);
-        const titleCased = topic.trim().replace(/\b\w/g, l => l.toUpperCase()).replace(/ /g, '_');
-        https.get('https://en.wikipedia.org/api/rest_v1/page/summary/' + encodeURIComponent(titleCased), {
-            headers: { 'User-Agent': 'LocalAI/1.0 (Mozilla/5.0)' },
-            timeout: 3000
-        }, res => {
-            let data = '';
-            res.on('data', chunk => data += chunk);
-            res.on('end', () => {
-                try {
-                    const j = JSON.parse(data);
-                    if (j.title && j.extract && !j.type?.includes('not_found')) {
-                        resolve({
-                            title: j.title,
-                            description: j.description || '',
-                            extract: j.extract
-                        });
-                        return;
-                    }
-                } catch (e) {}
-                resolve(null);
-            });
-        }).on('error', () => resolve(null));
-    });
+    return Promise.resolve(null);
 }
 
 // Dynamic Natural Language Query Extractor for News
@@ -1041,56 +1017,8 @@ function buildIssueSummaryFromHistory(history, prompt) {
 }
 
 // Enhanced multi-query encyclopedic search (Zero API Keys & Zero Sign-in Required)
+// Wikipedia API keyword search completely disabled
 async function fetchWikiKnowledge(query) {
-    try {
-        const clean = query
-            .replace(/^(who is|who was|what is|what was|tell me about|explain|describe|can you explain|what does|how does)\s+/i, '')
-            .replace(/\?+$/, '')
-            .trim();
-        if (!clean || clean.length < 2) return null;
-
-        const controller = new AbortController();
-        const timeoutId = setTimeout(() => controller.abort(), 3500);
-
-        // 1. Search Wikipedia for most relevant matching title
-        const searchUrl = `https://en.wikipedia.org/w/api.php?action=query&list=search&srsearch=${encodeURIComponent(clean)}&utf8=&format=json`;
-        const sRes = await fetch(searchUrl, {
-            headers: { 'User-Agent': 'LocalAI-ChatBot/2.0 (macOS; educational)' },
-            signal: controller.signal
-        });
-        
-        if (!sRes.ok) {
-            clearTimeout(timeoutId);
-            return null;
-        }
-
-        const sData = await sRes.json();
-        const firstMatch = sData.query?.search?.[0];
-        if (!firstMatch || !firstMatch.title) {
-            clearTimeout(timeoutId);
-            return null;
-        }
-
-        // 2. Fetch full summary for the matched article
-        const summaryUrl = `https://en.wikipedia.org/api/rest_v1/page/summary/${encodeURIComponent(firstMatch.title)}`;
-        const sumRes = await fetch(summaryUrl, {
-            headers: { 'User-Agent': 'LocalAI-ChatBot/2.0 (macOS; educational)' },
-            signal: controller.signal
-        });
-        clearTimeout(timeoutId);
-
-        if (sumRes.ok) {
-            const page = await sumRes.json();
-            if (page.extract && page.extract.length > 25) {
-                const articleUrl = page.content_urls?.desktop?.page || `https://en.wikipedia.org/wiki/${encodeURIComponent(page.title)}`;
-                return [{
-                    title: page.title,
-                    snippet: page.extract.trim(),
-                    url: articleUrl
-                }];
-            }
-        }
-    } catch (e) {}
     return null;
 }
 
@@ -2437,50 +2365,9 @@ What would you like to work on?`;
         return "**ManageEngine Endpoint Central** (formerly Desktop Central) is an enterprise Unified Endpoint Management (UEM) and security solution developed by Zoho Corporation. It enables IT administrators to monitor, manage, deploy software, automate patch management, and secure devices across Windows, macOS, Linux, and mobile operating systems from a single central console.";
     }
 
-    // 9. Online Knowledge Lookup (Wikipedia - only when genuinely appropriate)
-    const isProcedureOrIT = /\b(install|silent|deploy|push|gpo|command|cmd|powershell|script|configure|uninstall|migrate|dcagent|endpoint\s*central|crowdstrike|falcon)\b/i.test(p);
-    let wikiResult = null;
-    if (!isProcedureOrIT) {
-        wikiResult = await fetchWikiKnowledge(rawPrompt);
-    }
-    if (wikiResult && Array.isArray(wikiResult) && wikiResult[0] && wikiResult[0].snippet) {
-        return normalizeText(wikiResult[0].snippet);
-    }
-
-    // 10. Cooking, Recipes & Food Preparation
-    if (/\b(cook|bake|recipe|food|pasta|dish|cake|tea|coffee|dinner|lunch|breakfast|pizza|soup|bread|pie|curry|sauce|cookie|salad)\b/i.test(p)) {
-        const dish = rawPrompt.replace(/\b(how to|how do i|steps to|recipe for|make|cook|bake|prepare)\b/gi, '').trim();
-        const dishName = dish || 'the dish';
-        return `### 🍳 How to Make ${dishName.charAt(0).toUpperCase() + dishName.slice(1)}\n\n` +
-               `Here is a straightforward and delicious guide to preparing **${dishName}**:\n\n` +
-               `#### 🛒 Key Ingredients:\n` +
-               `- Main base / core ingredients (freshly prepared or measured to portion)\n` +
-               `- Seasoning: salt, freshly cracked black pepper, and herbs / spices of choice\n` +
-               `- Cooking fat: olive oil, butter, or cooking oil\n` +
-               `- Optional aromatics: minced garlic, onions, or fresh herbs for extra flavor\n\n` +
-               `#### 👩‍🍳 Preparation & Cooking Steps:\n` +
-               `1. **Prep & Mise en Place**: Gather and prep all ingredients. Wash, chop, and measure beforehand for smooth cooking.\n` +
-               `2. **Base Preparation**: Heat oil or butter in a pan/pot over medium heat. Sauté aromatics (such as onions and garlic) until fragrant and translucent.\n` +
-               `3. **Main Cooking**: Add the main ingredients. Simmer, roast, or stir according to desired texture, adjusting heat to cook evenly without burning.\n` +
-               `4. **Season & Taste**: Taste and adjust salt, acidity (such as a splash of lemon juice or vinegar), and seasonings to balance the flavors.\n` +
-               `5. **Garnish & Serve**: Remove from heat and serve warm with fresh herbs or garnishes!\n\n` +
-               `*Tip: Adjust quantities and spices according to your personal taste and dietary preferences.*`;
-    }
-
-    // 11. Technical & Administrative Inquiries (IT only)
-    const isEnterpriseIT = /\b(install|silent|deploy|uninstall|configure|gpo|powershell|cmd|agent|service|server|linux|windows|macos|cli|package|driver|firmware|port|firewall|dns|sysadmin)\b/i.test(p);
-    if (isEnterpriseIT && !p.includes('news')) {
-        const topic = rawPrompt.replace(/\b(how to|how do i|steps to|guide for|please explain)\b/gi, '').trim();
-        const title = topic || rawPrompt;
-        return `To deploy or configure ${title}:\n\n` +
-               `1. Open an administrative terminal (Elevated Command Prompt, PowerShell, or sudo terminal).\n` +
-               `2. Run the installer or tool using standard unattended/silent parameters (such as /install /quiet /norestart).\n` +
-               `3. Check the local service manager or installation logs to verify that the service is running and completed successfully.`;
-    }
-
+    // 9. Online Knowledge Lookup (Wikipedia disabled: real search handled by orchestrator)
     return null;
 }
-
 
 function readRequestBody(req) {
     return new Promise((resolve) => {

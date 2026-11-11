@@ -109,24 +109,27 @@ async function handleChatRequest(options) {
   const isCode = route.capability === CAPABILITIES.CODE_GENERATION || H.looksLikeCode(userText);
   const webSearchEnabled = options.webSearchEnabled !== false && userConfig.webSearch !== false && !isCode;
 
-  let searchContext = [];
+  let searchResults = [];
   if (webSearchEnabled && resolvedQuery !== "NO_SEARCH_NEEDED") {
     try {
       if (typeof options.webSearch === 'function') {
         const customRes = await options.webSearch(resolvedQuery);
         if (typeof customRes === 'string' && customRes.trim()) {
-          searchContext = [{ title: 'Web Search', snippet: customRes.trim(), url: '' }];
+          searchResults = [{ title: 'Web Search', snippet: customRes.trim(), url: '' }];
         } else if (Array.isArray(customRes)) {
-          searchContext = customRes;
+          searchResults = customRes;
         }
       } else {
-        searchContext = await searchWeb(resolvedQuery);
+        searchResults = await searchWeb(resolvedQuery);
       }
     } catch (err) {
       console.warn("Search retrieval failed, falling back to model knowledge:", err.message);
-      searchContext = [];
+      searchResults = [];
     }
   }
+
+  const searchContext = searchResults;
+  console.log("[DEBUG CHAT]", { userPrompt, searchResultsLength: searchResults.length });
 
   // 3. Construct LLM payload with conversation history & verified context
   const systemMessage = H.SYSTEM_PROMPT || "You are a helpful, direct AI assistant. Answer the user's question accurately. If search context is provided, use it to ground your answer. If no search context is provided or if it is irrelevant, answer using your internal knowledge. Never invent fake releases or repeat irrelevant sources.";
