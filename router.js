@@ -101,7 +101,10 @@ function analyzeRequest(rawPrompt, history = [], attachments = [], userConfig = 
 
     // Track active entities & topics in conversation state
     const candidateTopic = extractTopicFromText(prompt);
-    const isPronounFollowUp = /^(?:who publishes it|give me the official documentation|any official vendor document|official documentation|official vendor document|official docs|who makes it|who developed it|what about macos\??|what about mac\??|what about windows\??|what about linux\??)\b/i.test(p);
+    const isPronounFollowUp = /^(?:are\s+there|is\s+there)?\s*(?:any\s+)?(?:official\s+)?(?:vendor\s+)?(?:documents?|documentation|docs?)(?:\s+for\s+(?:this|it))?[?.]*$/i.test(p) ||
+                              /^(?:who publishes it|give me the official documentation|any official vendor document|official documentation|official vendor document|official docs|who makes it|who developed it|what about macos\??|what about mac\??|what about windows\??|what about linux\??)\b/i.test(p) ||
+                              /^(?:what|how)\s+about\b/i.test(p) ||
+                              /\b(?:for\s+this|for\s+it|about\s+it)\b/i.test(p);
 
     if (candidateTopic && !isPronounFollowUp) {
         conversationState.setActiveTopic(conversationId, candidateTopic);
@@ -201,7 +204,13 @@ function analyzeRequest(rawPrompt, history = [], attachments = [], userConfig = 
         p.includes('agent ip') ||
         p.includes('server name') ||
         p.includes('the site') ||
-        p.includes('first step')
+        p.includes('first step') ||
+        p.includes('what does it say') ||
+        p.includes('what does this say') ||
+        p.includes('summarize it') ||
+        p.includes('what did it say') ||
+        p.includes('what does this webpage say') ||
+        p.includes('what does the webpage say')
     );
 
     if (isUrlFollowUpQuestion) {
@@ -303,7 +312,8 @@ function analyzeRequest(rawPrompt, history = [], attachments = [], userConfig = 
         };
     }
 
-    const isVendorContextFollowUp = /^(?:any official vendor document|who publishes it|give me the official documentation|official documentation|official vendor document|official docs|who makes it|who developed it)[?.]*$/i.test(p) ||
+    const isVendorContextFollowUp = /^(?:are\s+there|is\s+there)?\s*(?:any\s+)?(?:official\s+)?(?:vendor\s+)?(?:documents?|documentation|docs?)(?:\s+for\s+(?:this|it))?[?.]*$/i.test(p) ||
+                                  /^(?:any official vendor document|who publishes it|give me the official documentation|official documentation|official vendor document|official docs|who makes it|who developed it)[?.]*$/i.test(p) ||
                                   (/^(?:who publishes|who makes|who created)\s+(?:it|this)[?.]*$/i.test(p));
 
     if (isVendorContextFollowUp) {
@@ -369,6 +379,30 @@ function analyzeRequest(rawPrompt, history = [], attachments = [], userConfig = 
             topic: 'Wi-Fi Connection',
             query: prompt,
             reason: 'Step-by-step technical guide for macOS Wi-Fi connection'
+        };
+    }
+
+    if (/update.*macos|macos.*update|update.*mac/i.test(p) && (/command line|cli|terminal/i.test(p) || /m4/i.test(p))) {
+        log('ROUTER RESULT', CAPABILITIES.TECHNICAL_TROUBLESHOOTING, { topic: 'macOS Command Line Update on Apple Silicon' });
+        return {
+            capability: CAPABILITIES.TECHNICAL_TROUBLESHOOTING,
+            product: 'Apple macOS',
+            module: 'Software Update CLI',
+            topic: 'Command Line macOS Update on Apple Silicon',
+            query: prompt,
+            reason: 'Technical command & procedure for updating macOS via command line on Apple Silicon M4'
+        };
+    }
+
+    if (/skype/i.test(p) && (/silent/i.test(p) || /install/i.test(p))) {
+        log('ROUTER RESULT', CAPABILITIES.TECHNICAL_TROUBLESHOOTING, { topic: 'Skype Silent Installation' });
+        return {
+            capability: CAPABILITIES.TECHNICAL_TROUBLESHOOTING,
+            product: 'Microsoft Skype',
+            module: 'Desktop Client Deployment',
+            topic: 'Silent Installation',
+            query: prompt,
+            reason: 'Technical command switch & procedure for Skype silent installation on Windows'
         };
     }
 

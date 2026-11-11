@@ -420,6 +420,212 @@ async function main() {
         assert(res.response.includes('Wi-Fi') || res.response.includes('Control Center'));
     });
 
+    // 35. URL Grounding & 4-section format: Endpoint Central agent IP change
+    await runAsyncTest('35. URL Grounding & 4-section format: Agent IP change', async () => {
+        const res = await orchestrateRequest({
+            prompt: 'Read this webpage and tell me what it says about changing Endpoint Central agent IP: https://www.manageengine.com/products/desktop-central/desktop_agent_change_ip.html',
+            conversationId: 'test_url_grounding_' + Date.now()
+        });
+        assert.strictEqual(typeof res.response, 'string');
+        assert(res.response.includes('### What the webpage says'), 'Must contain ### What the webpage says');
+        assert(res.response.includes('### Steps mentioned on the webpage'), 'Must contain ### Steps mentioned on the webpage');
+        assert(res.response.includes('### Important details'), 'Must contain ### Important details');
+        assert(res.response.includes('### Source'), 'Must contain ### Source');
+        assert(res.response.includes('configureDCAgentServerCommunication'), 'Must mention configureDCAgentServerCommunication script');
+        assert(res.response.includes('https://www.manageengine.com'), 'Must cite original URL');
+    });
+
+    // 36. URL Missing topic refusal: Refusal when content missing
+    await runAsyncTest('36. URL Missing topic refusal: Refuses when topic is absent', async () => {
+        const res = await orchestrateRequest({
+            prompt: 'Read this webpage and tell me what it says about Cisco VPN: https://www.manageengine.com/products/desktop-central/desktop_agent_change_ip.html',
+            conversationId: 'test_url_refusal_' + Date.now()
+        });
+        assert(res.response.includes('The webpage does not provide information about Cisco VPN'), 'Must explicitly state absence of requested info');
+        assert(!res.response.includes('configureDCAgentServerCommunication'), 'Must not invent steps for unrelated topics');
+    });
+
+    // 37. Mandatory Structured Source Extraction Contract
+    await runAsyncTest('37. Mandatory Structured Source Extraction Contract: All 15 fields present', async () => {
+        const candidate = {
+            url: 'https://learn.microsoft.com/en-us/azure/',
+            title: 'Azure Documentation',
+            rawSnippet: 'Official Microsoft Azure documentation',
+            score: 0.95
+        };
+        const pageResult = {
+            url: 'https://learn.microsoft.com/en-us/azure/',
+            finalUrl: 'https://learn.microsoft.com/en-us/azure/',
+            domain: 'learn.microsoft.com',
+            title: 'Azure Documentation',
+            httpStatus: 200,
+            contentType: 'text/html',
+            content: 'Detailed documentation for cloud services on Microsoft Azure platform.',
+            sections: [{ heading: 'Getting Started', text: 'Steps to configure', steps: ['1. Create account'], commands: [] }],
+            passages: ['Detailed documentation for cloud services'],
+            links: [{ text: 'Docs', url: 'https://learn.microsoft.com/docs' }]
+        };
+        const record = webRetrieval.buildStructuredSourceRecord(pageResult, candidate);
+        const requiredFields = [
+            'url', 'finalUrl', 'domain', 'title', 'publisher',
+            'retrievedAt', 'httpStatus', 'contentType', 'content',
+            'sections', 'relevantPassages', 'links', 'sourceType',
+            'relevanceScore', 'reliabilityScore'
+        ];
+        requiredFields.forEach(field => {
+            assert(field in record, `Field ${field} must be present in source record`);
+            assert(record[field] !== undefined, `Field ${field} must not be undefined`);
+        });
+        assert.strictEqual(record.reliabilityScore, 98, 'Vendor docs must have reliabilityScore 98');
+    });
+
+    // 38. Source Reliability Scoring
+    await runAsyncTest('38. Source Reliability Scoring: Authority-based tier assignment', async () => {
+        const vendor = webRetrieval.getSourceCategoryAndReliability('https://learn.microsoft.com/docs', 'learn.microsoft.com', 'Docs');
+        const news = webRetrieval.getSourceCategoryAndReliability('https://reuters.com/world', 'reuters.com', 'News');
+        const reddit = webRetrieval.getSourceCategoryAndReliability('https://reddit.com/r/sysadmin', 'reddit.com', 'Discussion');
+        const quora = webRetrieval.getSourceCategoryAndReliability('https://quora.com/question', 'quora.com', 'Q&A');
+
+        assert.strictEqual(vendor.reliabilityScore, 98, 'Vendor doc must be 98');
+        assert.strictEqual(news.reliabilityScore, 85, 'Major news must be 85');
+        assert.strictEqual(reddit.reliabilityScore, 55, 'Reddit must be 55');
+        assert.strictEqual(quora.reliabilityScore, 35, 'Quora must be 35');
+        assert(vendor.reliabilityScore > news.reliabilityScore);
+        assert(news.reliabilityScore > reddit.reliabilityScore);
+        assert(reddit.reliabilityScore > quora.reliabilityScore);
+    });
+
+    // 39. Multi-source consensus and differences format
+    await runAsyncTest('39. Multi-source consensus & differences response formatting', async () => {
+        const sources = [
+            {
+                url: 'https://support.apple.com/kb/HT201222',
+                domain: 'support.apple.com',
+                title: 'Apple Official',
+                content: 'Use the Command + R key combination to start into macOS Recovery.',
+                relevantPassages: ['Use Command + R for recovery.'],
+                reliabilityScore: 98,
+                sourceType: 'Official Vendor Documentation'
+            },
+            {
+                url: 'https://reddit.com/r/apple/comments/recovery',
+                domain: 'reddit.com',
+                title: 'Reddit Thread',
+                content: 'Some users report Option + Command + R also works to install the latest OS.',
+                relevantPassages: ['Option + Command + R installs latest macOS.'],
+                reliabilityScore: 55,
+                sourceType: 'Community Discussion Forum'
+            }
+        ];
+        const answer = webRetrieval.synthesizeMultiSourceAnswer('How to start in recovery mode', sources);
+        assert(answer.includes('### What the sources agree on'));
+        assert(answer.includes('### Differences'));
+        assert(answer.includes('### Conclusion'));
+        assert(answer.includes('### Sources'));
+        assert(answer.includes('support.apple.com'));
+    });
+
+    // 40. Citation Validation
+    await runAsyncTest('40. Citation Validation: Prevents ungrounded or hallucinated citations', async () => {
+        const sources = [{ url: 'https://support.apple.com/kb/HT201222' }];
+        const validText = 'You can read more at [Apple Support](https://support.apple.com/kb/HT201222).';
+        const hallucinatedText = 'Check out [Fake Guide](https://fake-hallucination-site.com/docs).';
+
+        const validCheck = webRetrieval.validateCitations(validText, sources);
+        const invalidCheck = webRetrieval.validateCitations(hallucinatedText, sources);
+
+        assert.strictEqual(validCheck.valid, true);
+        assert.strictEqual(invalidCheck.valid, false);
+        assert(invalidCheck.unverifiedUrls.includes('https://fake-hallucination-site.com/docs'));
+    });
+
+    // 41. Timeless Knowledge: DNS
+    await runAsyncTest('41. Timeless Knowledge: "Explain DNS" produces clear structured answer', async () => {
+        const res = await orchestrateRequest({
+            prompt: 'Explain DNS',
+            conversationId: 'test_dns_' + Date.now()
+        });
+        assert.strictEqual(res.capability, CAPABILITIES.NORMAL_CHAT);
+        assert(res.response.includes('Domain Name System'));
+        assert(res.response.includes('### Answer'));
+        assert(res.response.includes('### Details'));
+    });
+
+    // 42. Timeless Knowledge: Polymorphism
+    await runAsyncTest('42. Timeless Knowledge: "What is polymorphism?" produces clear structured answer', async () => {
+        const res = await orchestrateRequest({
+            prompt: 'What is polymorphism?',
+            conversationId: 'test_poly_' + Date.now()
+        });
+        assert.strictEqual(res.capability, CAPABILITIES.NORMAL_CHAT);
+        assert(res.response.includes('Polymorphism'));
+        assert(res.response.includes('Method Overloading') || res.response.includes('Method Overriding'));
+    });
+
+    // 43. Technical procedure: Skype silent install
+    await runAsyncTest('43. Technical procedure: "How do I silently install Skype on Windows?" produces silent switches', async () => {
+        const res = await orchestrateRequest({
+            prompt: 'How do I silently install Skype on Windows?',
+            conversationId: 'test_skype_' + Date.now()
+        });
+        assert.strictEqual(res.capability, CAPABILITIES.TECHNICAL_TROUBLESHOOTING);
+        assert(res.response.includes('/VERYSILENT'));
+        assert(res.response.includes('/NORESTART'));
+        assert(res.response.includes('### Recommended steps'));
+        assert(res.response.includes('### Sources'));
+    });
+
+    // 44. Technical procedure: Mac M4 CLI update
+    await runAsyncTest('44. Technical procedure: "How do I update macOS via command line on an M4 Mac?" produces softwareupdate commands', async () => {
+        const res = await orchestrateRequest({
+            prompt: 'How do I update macOS via command line on an M4 Mac?',
+            conversationId: 'test_m4_' + Date.now()
+        });
+        assert.strictEqual(res.capability, CAPABILITIES.TECHNICAL_TROUBLESHOOTING);
+        assert(res.response.includes('softwareupdate -l'));
+        assert(res.response.includes('softwareupdate -i -a'));
+        assert(res.response.includes('### Recommended steps'));
+        assert(res.response.includes('Apple Silicon'));
+    });
+
+    // 45. Context memory follow-up: Official vendor documents
+    await runAsyncTest('45. Context memory: "Are there any official vendor documents for this?" preserves topic', async () => {
+        const convId = 'test_vendor_doc_' + Date.now();
+        await orchestrateRequest({
+            prompt: 'How do I create an image repository in Endpoint Central OSD?',
+            conversationId: convId
+        });
+        const res = await orchestrateRequest({
+            prompt: 'Are there any official vendor documents for this?',
+            conversationId: convId
+        });
+        assert(res.response.includes('Official Vendor Documentation'));
+        assert(res.response.includes('ManageEngine'));
+        assert(res.response.includes('https://www.manageengine.com/products/desktop-central/help/'));
+    });
+
+    // 46. Full regression suite for normalizeText with edge cases
+    await runAsyncTest('46. Full regression suite: targetText.split edge cases (string, array, object, null, undefined)', () => {
+        const cases = [
+            'normal string with multiple words',
+            ['array', 'with', 'words'],
+            { text: 'object with text property' },
+            { response: 'object with response property' },
+            null,
+            undefined,
+            12345,
+            false
+        ];
+        for (const c of cases) {
+            const normalized = normalizeText(c);
+            assert.strictEqual(typeof normalized, 'string', `normalizeText must return string for ${typeof c}`);
+            assert.doesNotThrow(() => {
+                const words = normalized.split(' ');
+                assert(Array.isArray(words), 'Split must return array');
+            }, `Split failed on ${typeof c}`);
+        }
+    });
+
     console.log('\n========================================================');
     console.log(`🎯 COMPREHENSIVE TEST SUITE RESULT: ${passed}/${total} PASSED`);
     console.log('========================================================\n');
