@@ -1085,11 +1085,25 @@ async function fetchWikiKnowledge(query) {
                 const articleUrl = page.content_urls?.desktop?.page || `https://en.wikipedia.org/wiki/${encodeURIComponent(page.title)}`;
                 const paragraphs = page.extract.split("\n").filter(p => p.trim());
                 const firstPara = paragraphs[0] || page.extract;
+                const remainingText = paragraphs.slice(1).join("\n\n").trim();
+                let detailsText = "";
+                if (page.description) {
+                    detailsText += `**Topic Overview**: ${page.description}\n\n`;
+                }
+                if (remainingText) {
+                    detailsText += remainingText;
+                } else {
+                    const sentences = firstPara.split(/(?<=[.!?])\s+/).filter(s => s.trim().length > 10);
+                    if (sentences.length > 1) {
+                        detailsText += sentences.slice(1).map(s => `- ${s.trim()}`).join("\n");
+                    } else {
+                        detailsText += `Documented factual overview and reference data for **${page.title}**.`;
+                    }
+                }
                 return "## Answer\n" +
                        firstPara + "\n\n" +
                        "## Details\n" +
-                       (page.description ? `**Summary**: ${page.description}\n\n` : "") +
-                       page.extract + "\n\n" +
+                       detailsText + "\n\n" +
                        "## Sources\n" +
                        `- [${page.title} Reference](${articleUrl})`;
             }
