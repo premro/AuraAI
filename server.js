@@ -450,6 +450,7 @@ if __name__ == "__main__":
 
 const https = require('https');
 const querystring = require('querystring');
+const webRetrieval = require('./webRetrieval.js');
 
 // Real-Time Live News Fetcher (Google News RSS - Zero API Key required)
 function fetchLiveNews(topic = '') {
@@ -612,23 +613,15 @@ function fetchGoogleNewsSources(cleanQ) {
 }
 
 async function performLiveWebSearch(query) {
-    if (!query || query.trim().length === 0) return { sources: [], webContext: '' };
-    const cleanQ = normalizeSearchQuery(query.trim().replace(/[?!.,;]+/g, ' '));
-    
-    // Tier 1: DuckDuckGo Lite
-    let sources = await searchDuckDuckGoLite(cleanQ);
-
-    // Tier 2: Fallback to Google News RSS
-    if (!sources || sources.length === 0) {
-        sources = await fetchGoogleNewsSources(cleanQ);
-    }
-
-    let webContext = '';
-    if (sources && sources.length > 0) {
-        webContext = sources.map((s, idx) => `[Source ${idx + 1} (${s.domain})]: ${s.title}\n${s.snippet}\nLink: ${s.url}`).join('\n\n');
-    }
-
-    return { sources: sources || [], webContext };
+    if (!query || query.trim().length === 0) return { sources: [], webContext: '', confidence: 'LOW' };
+    const result = await webRetrieval.executeWebRetrievalPipeline(query);
+    return {
+        mode: result.mode,
+        confidence: result.confidence,
+        sources: result.sources || [],
+        webContext: result.webContext || '',
+        answer: result.answer || null
+    };
 }
 
 function synthesizeFromWebSources(rawPrompt, sources) {
@@ -1070,7 +1063,7 @@ async function fetchWikiKnowledge(query) {
 }
 
 // Call Google Gemini Official API
-async function callGeminiAPI(apiKey, prompt, messages = [], model = 'gemini-1.5-flash') {
+async function callGeminiAPI(apiKey, prompt, messages = [], model = 'gemini-1.5-flash', webContext = '') {
     try {
         const selectedModel = (model && model.includes('gemini')) ? model : 'gemini-1.5-flash';
         const url = `https://generativelanguage.googleapis.com/v1beta/models/${selectedModel}:generateContent?key=${apiKey}`;
@@ -1088,10 +1081,19 @@ async function callGeminiAPI(apiKey, prompt, messages = [], model = 'gemini-1.5-
             }];
         }
 
+        const requestBody = { contents };
+        if (webContext && webContext.trim()) {
+            requestBody.systemInstruction = {
+                parts: [{
+                    text: `You have access to live webpage content retrieved for the user request:\n\n${webContext}\n\nInstructions:\n- Answer strictly based on this retrieved webpage content.\n- Associate each factual claim with the source citation [Source N (domain)](url).\n- If the content is not sufficient to answer reliably, state that a reliable source could not be found instead of inventing an answer.`
+                }]
+            };
+        }
+
         const res = await fetch(url, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ contents })
+            body: JSON.stringify(requestBody)
         });
 
         if (res.ok) {
@@ -1116,7 +1118,7 @@ async function callGeminiAPI(apiKey, prompt, messages = [], model = 'gemini-1.5-
 }
 
 // Call OpenAI Official API or Groq API
-async function callOpenAIAPI(apiKey, prompt, messages = [], model = 'gpt-4o-mini') {
+async function callOpenAIAPI(apiKey, prompt, messages = [], model = 'gpt-4o-mini', webContext = '') {
     try {
         const isGroq = apiKey.startsWith('gsk_');
         let endpoint = 'https://api.openai.com/v1/chat/completions';
@@ -1135,6 +1137,13 @@ async function callOpenAIAPI(apiKey, prompt, messages = [], model = 'gpt-4o-mini
             })).filter(m => m.content);
         } else {
             chatMessages = [{ role: 'user', content: prompt }];
+        }
+
+        if (webContext && webContext.trim()) {
+            chatMessages.unshift({
+                role: 'system',
+                content: `You have access to live webpage content retrieved for the user request:\n\n${webContext}\n\nInstructions:\n- Answer strictly based on this retrieved webpage content.\n- Associate each factual claim with the source citation [Source N (domain)](url).\n- If the content is not sufficient to answer reliably, state that a reliable source could not be found instead of inventing an answer.`
+            });
         }
 
         const res = await fetch(endpoint, {
@@ -1676,41 +1685,27 @@ function fetchUrlContent(targetUrl) {
     });
 }
 
-async function handleUrlInput(rawPrompt, p) {
-    const urlMatch = rawPrompt.match(/https?:\/\/[^\s]+/i);
-    if (!urlMatch) return null;
+async function handleUrlInput(rawPrompt, p, userConfig = {}) {
+    if (!webRetrieval.hasDirectUrl(rawPrompt)) return null;
 
-    const url = urlMatch[0];
-
-    // ManageEngine Desktop Central / Endpoint Central Logs Documentation
-    if (url.includes('manageengine.com') && (url.includes('logs') || url.includes('desktop-central') || url.includes('endpoint-central'))) {
-        return `The link you provided directs to the ManageEngine Desktop Central documentation, specifically about managing logs. This section typically includes information on how to view, manage, and analyze logs generated by the Desktop Central application.\n\n` +
-               `Here’s a brief overview of what you can expect from that page:\n\n` +
-               `1. **Log Types**: Information about different types of logs, such as user logs, error logs, and event logs.\n` +
-               `2. **Accessing Logs**: Instructions on how to access the logs within the Desktop Central interface.\n` +
-               `3. **Log Management**: Guidelines on how to manage these logs effectively, including configuration settings for log retention and export options.\n` +
-               `4. **Troubleshooting**: Tips for using logs to troubleshoot issues within the application.\n\n` +
-               `If you need specifics or have any questions about the content, feel free to ask!`;
+    // DIRECT URL MODE: Fetch URL directly, determine format, extract content, ground LLM
+    const retrievalResult = await webRetrieval.executeWebRetrievalPipeline(rawPrompt);
+    if (!retrievalResult || !retrievalResult.success) {
+        return retrievalResult?.answer || "I attempted to retrieve the document, but could not successfully extract meaningful content.";
     }
 
-    const pageInfo = await fetchUrlContent(url);
-    if (pageInfo && pageInfo.title) {
-        let summary = `The link you provided directs to **${pageInfo.domain}** (${pageInfo.title}).\n\n`;
-        if (pageInfo.description) {
-            summary += `> ${pageInfo.description}\n\n`;
+    const activeApiKey = (userConfig.apiKey || process.env.GEMINI_API_KEY || process.env.OPENAI_API_KEY || process.env.GROQ_API_KEY || '').trim();
+    if (activeApiKey) {
+        if (activeApiKey.startsWith('AIza')) {
+            const geminiReply = await callGeminiAPI(activeApiKey, rawPrompt, [], userConfig.model, retrievalResult.webContext);
+            if (geminiReply) return geminiReply;
+        } else if (activeApiKey.startsWith('sk-') || activeApiKey.startsWith('gsk_')) {
+            const openaiReply = await callOpenAIAPI(activeApiKey, rawPrompt, [], userConfig.model, retrievalResult.webContext);
+            if (openaiReply) return openaiReply;
         }
-        if (pageInfo.headings && pageInfo.headings.length > 0) {
-            summary += `Here is an overview of what is covered on that page:\n\n`;
-            pageInfo.headings.forEach((h, i) => {
-                summary += `${i + 1}. **${h}**\n`;
-            });
-            summary += `\n`;
-        }
-        summary += `If you need specifics or have any questions about the content, feel free to ask!`;
-        return summary;
     }
 
-    return null;
+    return webRetrieval.synthesizeAnswerFromRetrievedContent(rawPrompt, retrievalResult);
 }
 
 function handleEmailDraft(rawPrompt, p) {
@@ -1767,7 +1762,58 @@ async function generateSmartResponse(prompt, history = [], userConfig = {}) {
 
     const activeApiKey = (userConfig.apiKey || process.env.GEMINI_API_KEY || process.env.OPENAI_API_KEY || process.env.GROQ_API_KEY || '').trim();
 
-    // 1. Real Online Frontier AI (Google Gemini, OpenAI, Groq)
+    // DIRECT URL MODE: If user provided a URL explicitly, do NOT search first
+    if (webRetrieval.hasDirectUrl(rawPrompt)) {
+        return handleUrlInput(rawPrompt, p, userConfig);
+    }
+
+    // WEB SEARCH & RETRIEVAL PIPELINE: If web search is active, execute retrieval pipeline
+    if (userConfig.webSearch !== false) {
+        let retrievalResult = null;
+        let liveSearchSources = (userConfig.webSources && userConfig.webSources.length > 0) ? userConfig.webSources : [];
+        let liveWebContext = userConfig.webContext || '';
+
+        if (liveSearchSources.length === 0 || !liveWebContext) {
+            retrievalResult = await webRetrieval.executeWebRetrievalPipeline(rawPrompt);
+            if (retrievalResult && retrievalResult.sources) {
+                liveSearchSources = retrievalResult.sources;
+                liveWebContext = retrievalResult.webContext || '';
+            }
+        } else {
+            retrievalResult = {
+                mode: 'web_search',
+                confidence: 'HIGH',
+                sources: liveSearchSources,
+                webContext: liveWebContext
+            };
+        }
+
+        if (retrievalResult) {
+            // SOURCE VALIDATION: If confidence is LOW, state transparently instead of inventing
+            if (retrievalResult.confidence === 'LOW') {
+                return retrievalResult.answer || "I found search results, but I could not find a sufficiently relevant source to answer this reliably.";
+            }
+
+            // Pass retrieved webpage passages to active LLM
+            if (activeApiKey) {
+                if (activeApiKey.startsWith('AIza')) {
+                    const geminiReply = await callGeminiAPI(activeApiKey, rawPrompt, history, userConfig.model, liveWebContext);
+                    if (geminiReply) return geminiReply;
+                } else if (activeApiKey.startsWith('sk-') || activeApiKey.startsWith('gsk_')) {
+                    const openaiReply = await callOpenAIAPI(activeApiKey, rawPrompt, history, userConfig.model, liveWebContext);
+                    if (openaiReply) return openaiReply;
+                }
+            }
+
+            // If no external API key, synthesize grounded answer directly from retrieved webpage content
+            const synthesizedAnswer = webRetrieval.synthesizeAnswerFromRetrievedContent(rawPrompt, retrievalResult);
+            if (synthesizedAnswer) {
+                return synthesizedAnswer;
+            }
+        }
+    }
+
+    // 1. Frontier AI when webSearch is explicitly disabled
     if (activeApiKey) {
         if (activeApiKey.startsWith('AIza')) {
             const geminiReply = await callGeminiAPI(activeApiKey, rawPrompt, history, userConfig.model);
@@ -2124,15 +2170,23 @@ function handleRequest(req, res) {
 
     // Live Breaking News Endpoint
     
-    // Real-Time Live Web Search API Endpoint
+    // Real-Time Live Web Search & Retrieval Pipeline API Endpoint
     if (pathname === '/api/search' && req.method === 'GET') {
         const q = parsedUrl.searchParams ? (parsedUrl.searchParams.get('q') || '') : '';
-        performLiveWebSearch(q).then(result => {
-            res.writeHead(200, { 'Content-Type': 'application/json' });
-            res.end(JSON.stringify({ status: 'ok', query: q, sources: result.sources, webContext: result.webContext }));
+        webRetrieval.executeWebRetrievalPipeline(q).then(result => {
+            res.writeHead(200, { 'Content-Type': 'application/json; charset=utf-8' });
+            res.end(JSON.stringify({ 
+                status: 'ok', 
+                query: q, 
+                mode: result.mode,
+                confidence: result.confidence,
+                sources: result.sources || [], 
+                webContext: result.webContext || '',
+                answer: result.answer || null
+            }));
         }).catch(err => {
             res.writeHead(500, { 'Content-Type': 'application/json' });
-            res.end(JSON.stringify({ error: err.message, sources: [], webContext: '' }));
+            res.end(JSON.stringify({ error: err.message, sources: [], webContext: '', confidence: 'LOW' }));
         });
         return;
     }

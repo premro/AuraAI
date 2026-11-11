@@ -781,8 +781,9 @@ async function sendMessage() {
             let liveWebSources = [];
             let liveWebContext = '';
 
-            // Search the live web if webSearch is enabled
-            if (state.webSearch && text.trim().length > 3) {
+            // DIRECT URL MODE OR LIVE WEB RETRIEVAL
+            const hasDirectUrl = /https?:\/\/[^\s]+/i.test(text);
+            if ((state.webSearch || hasDirectUrl) && text.trim().length > 3) {
                 try {
                     const searchRes = await fetch(`/api/search?q=${encodeURIComponent(text.trim())}`);
                     if (searchRes.ok) {
@@ -828,10 +829,24 @@ async function sendMessage() {
                 }
             }
         } else if (state.engine === 'webllm') {
+            const hasDirectUrl = /https?:\/\/[^\s]+/i.test(text);
+            let liveWebContext = '';
+            if ((state.webSearch || hasDirectUrl) && text.trim().length > 3) {
+                try {
+                    const searchRes = await fetch(`/api/search?q=${encodeURIComponent(text.trim())}`);
+                    if (searchRes.ok) {
+                        const searchData = await searchRes.json();
+                        liveWebContext = searchData.webContext || '';
+                    }
+                } catch (e) {}
+            }
+
             const engine = await getWebLLMEngine();
 
+            const systemPromptWithContext = state.systemPrompt + (liveWebContext ? `\n\nVerified Retrieved Web Content:\n${liveWebContext}\n\nInstructions:\n- Answer strictly based on the retrieved web content.\n- Cite sources using [Source N (domain)](url).` : '');
+
             const messagesPayload = [
-                { role: 'system', content: state.systemPrompt },
+                { role: 'system', content: systemPromptWithContext },
                 ...currentChat.messages
             ];
 
@@ -848,8 +863,22 @@ async function sendMessage() {
                 updateMessageContent(assistantBubble, fullResponse, true);
             }
         } else if (state.engine === 'ollama') {
+            const hasDirectUrl = /https?:\/\/[^\s]+/i.test(text);
+            let liveWebContext = '';
+            if ((state.webSearch || hasDirectUrl) && text.trim().length > 3) {
+                try {
+                    const searchRes = await fetch(`/api/search?q=${encodeURIComponent(text.trim())}`);
+                    if (searchRes.ok) {
+                        const searchData = await searchRes.json();
+                        liveWebContext = searchData.webContext || '';
+                    }
+                } catch (e) {}
+            }
+
+            const systemPromptWithContext = state.systemPrompt + (liveWebContext ? `\n\nVerified Retrieved Web Content:\n${liveWebContext}\n\nInstructions:\n- Answer strictly based on the retrieved web content.\n- Cite sources using [Source N (domain)](url).` : '');
+
             const messagesPayload = [
-                { role: 'system', content: state.systemPrompt },
+                { role: 'system', content: systemPromptWithContext },
                 ...currentChat.messages
             ];
 
