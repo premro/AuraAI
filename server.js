@@ -1128,15 +1128,16 @@ async function callGeminiAPI(apiKey, prompt, messages = [], model = 'gemini-2.5-
 }
 
 // Call OpenAI Official API or Groq API
-async function callOpenAIAPI(apiKey, prompt, messages = [], model = 'gpt-4o-mini', systemPrompt = '') {
+async function callOpenAIAPI(apiKey, prompt, messages = [], model = 'llama-3.3-70b-versatile', systemPrompt = '') {
     try {
-        const isGroq = apiKey.startsWith('gsk_');
+        const effectiveKey = apiKey || process.env.GROQ_API_KEY || process.env.OPENAI_API_KEY;
+        const isGroq = (effectiveKey && effectiveKey.startsWith('gsk_')) || (model && (model.includes('llama') || model.includes('groq'))) || (!effectiveKey?.startsWith('sk-') && !!process.env.GROQ_API_KEY);
         let endpoint = 'https://api.openai.com/v1/chat/completions';
         let defaultModel = model || 'gpt-4o-mini';
 
         if (isGroq) {
             endpoint = 'https://api.groq.com/openai/v1/chat/completions';
-            defaultModel = 'llama-3.3-70b-versatile';
+            defaultModel = (model && model.includes('llama')) ? model : 'llama-3.3-70b-versatile';
         }
 
         let chatMessages = [];
@@ -1159,7 +1160,7 @@ async function callOpenAIAPI(apiKey, prompt, messages = [], model = 'gpt-4o-mini
             method: 'POST',
             headers: {
                 'Content-Type': 'application/json',
-                'Authorization': `Bearer ${apiKey}`
+                'Authorization': `Bearer ${effectiveKey}`
             },
             body: JSON.stringify({
                 model: defaultModel,
@@ -2673,9 +2674,45 @@ function handleRequest(req, res) {
             try {
                 const messages = parsed.messages || [];
                 const lastUserMessage = parsed.prompt || [...messages].reverse().find(m => m.role === 'user')?.content || 'hi';
+                
+                let effectiveKey = (parsed.apiKey || '').trim();
+                let requestedModel = parsed.model || 'gemini-1.5-flash';
+
+                // Server-Side Key Fallback & Auto-routing
+                if (!effectiveKey) {
+                    if (requestedModel === 'llama-3.3-70b-versatile' || requestedModel.includes('llama') || requestedModel.includes('groq')) {
+                        effectiveKey = process.env.GROQ_API_KEY || process.env.GEMINI_API_KEY || process.env.OPENAI_API_KEY || '';
+                    } else if (requestedModel.includes('gemini')) {
+                        effectiveKey = process.env.GEMINI_API_KEY || process.env.GROQ_API_KEY || process.env.OPENAI_API_KEY || '';
+                    } else if (requestedModel.includes('gpt')) {
+                        if (process.env.OPENAI_API_KEY) {
+                            effectiveKey = process.env.OPENAI_API_KEY;
+                        } else if (process.env.GROQ_API_KEY) {
+                            effectiveKey = process.env.GROQ_API_KEY;
+                            requestedModel = 'llama-3.3-70b-versatile';
+                        } else if (process.env.GEMINI_API_KEY) {
+                            effectiveKey = process.env.GEMINI_API_KEY;
+                            requestedModel = 'gemini-1.5-flash';
+                        }
+                    } else {
+                        effectiveKey = process.env.GROQ_API_KEY || process.env.GEMINI_API_KEY || process.env.OPENAI_API_KEY || '';
+                    }
+                } else if (!effectiveKey.startsWith('sk-') && (requestedModel.includes('gpt') || requestedModel.includes('chatgpt'))) {
+                    // User selected ChatGPT (GPT-4o mini) but has no OpenAI key
+                    if (process.env.OPENAI_API_KEY) {
+                        effectiveKey = process.env.OPENAI_API_KEY;
+                    } else if (process.env.GROQ_API_KEY || effectiveKey.startsWith('gsk_')) {
+                        effectiveKey = effectiveKey.startsWith('gsk_') ? effectiveKey : process.env.GROQ_API_KEY;
+                        requestedModel = 'llama-3.3-70b-versatile';
+                    } else if (process.env.GEMINI_API_KEY || effectiveKey.startsWith('AIza')) {
+                        effectiveKey = effectiveKey.startsWith('AIza') ? effectiveKey : process.env.GEMINI_API_KEY;
+                        requestedModel = 'gemini-1.5-flash';
+                    }
+                }
+
                 const userConfig = {
-                    apiKey: parsed.apiKey || '',
-                    model: parsed.model || 'gpt-4o-mini',
+                    apiKey: effectiveKey,
+                    model: requestedModel,
                     temperature: parsed.temperature || 0.7,
                     webSearch: parsed.webSearch === true,
                     webSources: parsed.webSources || [],

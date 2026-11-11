@@ -10,10 +10,11 @@
  */
 
 const INSTANT_MODELS = [
+    { id: "gemini-1.5-flash", name: "Gemini 1.5 Flash (Free Default)" },
+    { id: "llama-3.3-70b-versatile", name: "Llama 3.3 70B (Groq - Fast)" },
     { id: "gpt-4o-mini", name: "ChatGPT (GPT-4o mini)" },
     { id: "gpt-4o", name: "ChatGPT (GPT-4o)" },
     { id: "claude-3-5-sonnet", name: "Claude 3.5 Sonnet" },
-    { id: "gemini-1.5-flash", name: "Gemini 1.5 Flash" },
     { id: "deepseek-chat", name: "DeepSeek V3" }
 ];
 

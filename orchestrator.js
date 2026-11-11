@@ -34,10 +34,42 @@ async function handleChatRequest(options) {
   const userConfig = options.userConfig || {};
   const conversationId = options.conversationId || 'default';
 
-  const apiKey = (options.apiKey || userConfig.apiKey || process.env.GEMINI_API_KEY || process.env.OPENAI_API_KEY || '').trim();
-  const provider = options.provider || pickProvider(apiKey);
-  const model = options.model || userConfig.model ||
-    (provider === 'gemini' ? (process.env.DEFAULT_GEMINI_MODEL || 'gemini-2.5-flash') : 'gpt-4o-mini');
+  let apiKey = (options.apiKey || userConfig.apiKey || '').trim();
+  let model = options.model || userConfig.model || 'gemini-1.5-flash';
+
+  // Server-Side Key Fallback & Provider Routing
+  if (!apiKey) {
+    if (model === 'llama-3.3-70b-versatile' || model.includes('llama') || model.includes('groq')) {
+      apiKey = process.env.GROQ_API_KEY || process.env.GEMINI_API_KEY || process.env.OPENAI_API_KEY || '';
+    } else if (model.includes('gemini')) {
+      apiKey = process.env.GEMINI_API_KEY || process.env.GROQ_API_KEY || process.env.OPENAI_API_KEY || '';
+    } else if (model.includes('gpt')) {
+      if (process.env.OPENAI_API_KEY) {
+        apiKey = process.env.OPENAI_API_KEY;
+      } else if (process.env.GROQ_API_KEY) {
+        apiKey = process.env.GROQ_API_KEY;
+        model = 'llama-3.3-70b-versatile';
+      } else if (process.env.GEMINI_API_KEY) {
+        apiKey = process.env.GEMINI_API_KEY;
+        model = 'gemini-1.5-flash';
+      }
+    } else {
+      apiKey = process.env.GROQ_API_KEY || process.env.GEMINI_API_KEY || process.env.OPENAI_API_KEY || '';
+    }
+  } else if (!apiKey.startsWith('sk-') && (model.includes('gpt') || model.includes('chatgpt'))) {
+    // If the user selects ChatGPT (GPT-4o mini) but has no OpenAI key, automatically route through Groq or Gemini
+    if (process.env.OPENAI_API_KEY) {
+      apiKey = process.env.OPENAI_API_KEY;
+    } else if (apiKey.startsWith('gsk_') || process.env.GROQ_API_KEY) {
+      apiKey = apiKey.startsWith('gsk_') ? apiKey : process.env.GROQ_API_KEY;
+      model = 'llama-3.3-70b-versatile';
+    } else if (apiKey.startsWith('AIza') || process.env.GEMINI_API_KEY) {
+      apiKey = apiKey.startsWith('AIza') ? apiKey : process.env.GEMINI_API_KEY;
+      model = 'gemini-1.5-flash';
+    }
+  }
+
+  const provider = options.provider || pickProvider(apiKey) || (model.includes('gemini') ? 'gemini' : 'openai');
 
   const debug = { conversationId, provider, model, keyPresent: !!apiKey };
   const prior = H.dropCurrentTurn(history, userPrompt);

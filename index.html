@@ -131,7 +131,14 @@
 
                     <div class="model-select-wrapper chatgpt-model-pill">
                         <select id="modelSelect" class="model-select" title="Select AI Model">
-                            <!-- Populated dynamically via JS -->
+                            <optgroup label="Cloud / Frontier AI">
+                                <option value="gemini-1.5-flash" selected>Gemini 1.5 Flash (Free Default)</option>
+                                <option value="llama-3.3-70b-versatile">Llama 3.3 70B (Groq - Fast)</option>
+                                <option value="gpt-4o-mini">ChatGPT (GPT-4o mini)</option>
+                                <option value="gpt-4o">ChatGPT (GPT-4o)</option>
+                                <option value="claude-3-5-sonnet">Claude 3.5 Sonnet</option>
+                                <option value="deepseek-chat">DeepSeek V3</option>
+                            </optgroup>
                         </select>
                     </div>
                 </div>
