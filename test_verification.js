@@ -46,5 +46,26 @@ const base = { callGeminiAPI: gem, userConfig: { apiKey: 'AIzaTEST' } };
     generateSmartResponseFallback: server.generateSmartResponse
   });
   assert(r.response && r.response.includes('Endpoint Central') && r.verifiedOnline && r.capability === 'web_research', 'H: endpoint central install');
-  console.log('ALL TESTS PASSED (A through H)');
+    // I: Follow-up "how to push via gpo" inherits Endpoint Central context and does NOT return UK telephones
+  r = await orchestrateRequest({
+    prompt: 'how to push via gpo',
+    history: [
+      { role: 'user', content: 'how install endpoint central agent' },
+      { role: 'assistant', content: 'For Endpoint Central, you can install the agent...' }
+    ],
+    userConfig: { apiKey: '' },
+    generateSmartResponseFallback: server.generateSmartResponse
+  });
+  assert(r.response && r.response.includes('Group Policy') && !r.response.includes('telephone') && r.capability === 'web_research', 'I: follow-up gpo context');
+
+  // J: Typo "how to push via gpo endpoint centrl agent" does not hit canned refusal
+  r = await orchestrateRequest({
+    prompt: 'how to push via gpo endpoint centrl agent',
+    history: [],
+    userConfig: { apiKey: '' },
+    generateSmartResponseFallback: server.generateSmartResponse
+  });
+  assert(r.response && r.response.includes('Group Policy') && !r.response.includes('could not find a reliable source'), 'J: typo tolerance and gpo install');
+
+  console.log('ALL TESTS PASSED (A through J)');
 })().catch(e => { console.error('FAIL', e.message); process.exit(1); });

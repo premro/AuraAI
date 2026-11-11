@@ -42,9 +42,19 @@ async function orchestrateRequest({
   // 2. Rewrite short follow-ups into standalone requests (fixes "his net wroth")
   let userText = H.withAttachments(rawPrompt, attachments);
   let rewritten = false;
-  if (prior.length && rawPrompt.length < 120 && !attachments.length && provider) {
-    const r = await callModel(H.REWRITE_SYSTEM, rawPrompt, prior.slice(-6));
-    if (r && r.trim() && r.length < 300) { userText = r.trim(); rewritten = true; }
+  if (prior.length && rawPrompt.length < 120 && !attachments.length) {
+    if (provider) {
+      const r = await callModel(H.REWRITE_SYSTEM, rawPrompt, prior.slice(-6));
+      if (r && r.trim() && r.length < 300) { userText = r.trim(); rewritten = true; }
+    } else {
+      // Local context resolution when no external LLM is configured
+      const priorText = prior.map(m => m.content || '').join(' ');
+      const ecMatch = priorText.match(/\b(endpoint\s*centr[ae]?l|desktop\s*centr[ae]?l|dcagent)\b/i);
+      if (ecMatch && /\b(gpo|push|agent|install|silent|powershell|deploy|uninstall|upgrade|update)\b/i.test(rawPrompt) && !ecMatch[0].toLowerCase().includes(rawPrompt.toLowerCase())) {
+        userText = `${rawPrompt} ${ecMatch[0]} agent`;
+        rewritten = true;
+      }
+    }
   }
 
   // 3. Route on the standalone text

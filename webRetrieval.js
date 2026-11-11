@@ -1355,7 +1355,19 @@ async function executeWebRetrievalPipeline(query, options = {}) {
     }
 
     // Targeted Authority Enhancements (Before early-exit check)
-    if (/endpoint\s+central|desktop\s+central/i.test(rawQuery)) {
+    if (/endpoint\s*centr[ae]?l|desktop\s*centr[ae]?l|dcagent/i.test(rawQuery)) {
+        if (/gpo|group policy/i.test(rawQuery)) {
+            uniqueCandidates.unshift({
+                title: 'Installing Endpoint Central Agent using Group Policy (GPO) - ManageEngine',
+                url: 'https://www.manageengine.com/products/desktop-central/help/device-onboarding/install-agent-using-active-directory-gpo.html',
+                domain: 'manageengine.com',
+                publisher: 'ManageEngine (Zoho Corporation)',
+                snippet: 'In Endpoint Central console, download agent GPO package containing DCAgent.msi and DCAgent.mst. Place files in a shared network UNC path. In Group Policy Management (gpmc.msc), create/edit GPO under Computer Configuration > Policies > Software Settings > Software Installation. Add DCAgent.msi as an Advanced package, add DCAgent.mst in Modifications tab. Run gpupdate /force on target computers to deploy.',
+                score: 99,
+                conflictPenalty: 0,
+                isRelevant: true
+            });
+        }
         if (/who publishes|who makes|publisher|vendor/i.test(rawQuery)) {
             uniqueCandidates.unshift({
                 title: 'About ManageEngine Endpoint Central - Zoho Corporation',

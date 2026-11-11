@@ -655,6 +655,49 @@ function synthesizeFromWebSources(rawPrompt, sources) {
     return output;
 }
 
+
+function getEndpointCentralGpoInstallDoc() {
+    return `### 🛠️ Installing ManageEngine Endpoint Central Agent via Group Policy (GPO)
+
+To deploy the **Endpoint Central Agent** across multiple Active Directory domain computers using **Group Policy (GPO)**, follow these official steps:
+
+### Step 1: Download the GPO Installation Package
+1. Log in to the **Endpoint Central Console** as an Administrator.
+2. Navigate to **Agent > Scope of Management > Computers > Download Agent**.
+3. Select the required Remote Office or Local Office domain scope.
+4. Choose **Active Directory GPO / SCCM** to download the archive file (containing \`DCAgent.msi\` and \`DCAgent.mst\`).
+
+### Step 2: Place Installer Files in a Shared Network Folder
+1. Extract the downloaded package to obtain \`DCAgent.msi\` and \`DCAgent.mst\`.
+2. Place both files in a shared network location accessible by **Domain Computers** with Read permissions (e.g., \`\\\\YOUR-DC\\NETLOGON\\DCAgent\\\` or \`\\\\Server\\Share\\DCAgent\\\`).
+> **Note**: Verify network share permissions allow **Domain Computers** or **Everyone** read access.
+
+### Step 3: Configure the Group Policy Object (GPO)
+1. On your Domain Controller, open **Group Policy Management Console** (\`gpmc.msc\`).
+2. Right-click the target **Organizational Unit (OU)** containing target computers and select **Create a GPO in this domain, and Link it here...** (e.g. name it *EndpointCentral-Agent-Deploy*).
+3. Right-click the newly created GPO and click **Edit** to open the Group Policy Management Editor.
+4. Navigate to:
+   **Computer Configuration > Policies > Software Settings > Software Installation**
+5. Right-click **Software Installation > New > Package...**
+6. Browse to the network share using the **UNC path** (e.g. \`\\\\Server\\Share\\DCAgent\\DCAgent.msi\`) — *do not use a local drive letter*.
+7. In the *Deploy Software* dialog box, select **Advanced** and click **OK**.
+8. In the Package Properties dialog, switch to the **Modifications** tab.
+9. Click **Add** and select the \`DCAgent.mst\` transform file from the same UNC share path.
+10. Click **OK** to save the policy.
+
+### Step 4: Verification & Client Deployment
+- The agent installs automatically when client computers restart.
+- To force an immediate update on a client machine, open Command Prompt as Administrator and run:
+  \`\`\`cmd
+  gpupdate /force
+  \`\`\`
+- Restart the client machine.
+- In the Endpoint Central console, verify that the computer status updates to **Agent Installed** under **Agent > Scope of Management > Computers**.
+
+## Sources
+- [ManageEngine Endpoint Central: Installing Agent using Active Directory GPO](https://www.manageengine.com/products/desktop-central/help/device-onboarding/install-agent-using-active-directory-gpo.html) (Official Vendor Documentation)`;
+}
+
 function getEndpointCentralAgentInstallDoc() {
     return `For **Endpoint Central**, you can install the agent on Windows endpoints in several ways. The easiest depends on whether you are installing it on **one computer, multiple computers, an AD domain, or a remote office**. ManageEngine currently documents manual, push, GPO, network share, IP range, and command line methods. [ManageEngine +1](https://www.manageengine.com/products/desktop-central/help/device-onboarding/agent-installation-methods.html)
 
@@ -1985,9 +2028,20 @@ async function generateSmartResponse(prompt, history = [], userConfig = {}) {
         return emailReply;
     }
 
-    // 1.6 Priority: ManageEngine Endpoint Central Agent Installation (exact docs & commands)
-    if ((p.includes('endpoint central') || p.includes('desktop central')) && (p.includes('agent') || p.includes('install') || p.includes('setup') || p.includes('deploy') || p.includes('dcagent') || p.includes('download') || p.includes('silent'))) {
-        return getEndpointCentralAgentInstallDoc();
+    // 1.6 Priority: ManageEngine Endpoint Central Agent Installation & GPO Deployment
+    const priorContextStr = Array.isArray(history) ? history.map(m => m.content || '').join(' ').toLowerCase() : '';
+    const isEndpointCentralContext = /endpoint\s*centr[ae]?l|desktop\s*centr[ae]?l|dcagent/i.test(p + ' ' + priorContextStr);
+    
+    if (isEndpointCentralContext) {
+        if (p.includes('gpo') || p.includes('group policy') || (p.includes('active directory') && (p.includes('push') || p.includes('deploy')))) {
+            return getEndpointCentralGpoInstallDoc();
+        }
+        if (p.includes('agent') || p.includes('install') || p.includes('setup') || p.includes('deploy') || p.includes('dcagent') || p.includes('download') || p.includes('silent') || p.includes('push')) {
+            return getEndpointCentralAgentInstallDoc();
+        }
+        if (p.includes('migration') || p.includes('migrate') || p.includes('backup') || p.includes('restore') || p.includes('server')) {
+            return getEndpointCentralMigrationDoc();
+        }
     }
 
     // 2. Priority: Document, Excel, Screenshot & Image Attachments
@@ -2288,7 +2342,11 @@ What would you like to work on?`;
     }
 
     // 9. Online Knowledge Lookup (Wikipedia - only when genuinely appropriate)
-    const wikiResult = await fetchWikiKnowledge(rawPrompt);
+    const isProcedureOrIT = /\b(how to|install|setup|deploy|push|gpo|command|cmd|powershell|script|configure|troubleshoot|fix|error|uninstall|migrate)\b/i.test(p);
+    let wikiResult = null;
+    if (!isProcedureOrIT) {
+        wikiResult = await fetchWikiKnowledge(rawPrompt);
+    }
     if (wikiResult) {
         return normalizeText(wikiResult);
     }
