@@ -2136,20 +2136,32 @@ function handleRequest(req, res) {
     const pathname = getRequestPath(req);
     const parsedUrl = new URL(req.url, `http://${req.headers.host || 'localhost'}`);
 
-    // Fast memory static routing for Vercel Serverless
+    // Fast static routing (with disk reload for local development & fallback for Vercel Serverless)
     if (pathname === '/' || pathname === '/index.html') {
         res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8' });
-        res.end(indexHtmlCache);
+        try {
+            res.end(fs.readFileSync(path.join(__dirname, 'index.html'), 'utf-8'));
+        } catch (e) {
+            res.end(indexHtmlCache);
+        }
         return;
     }
     if (pathname === '/css/styles.css') {
         res.writeHead(200, { 'Content-Type': 'text/css; charset=utf-8' });
-        res.end(cssCache);
+        try {
+            res.end(fs.readFileSync(path.join(__dirname, 'css', 'styles.css'), 'utf-8'));
+        } catch (e) {
+            res.end(cssCache);
+        }
         return;
     }
     if (pathname === '/js/app.js') {
         res.writeHead(200, { 'Content-Type': 'application/javascript; charset=utf-8' });
-        res.end(jsCache);
+        try {
+            res.end(fs.readFileSync(path.join(__dirname, 'js', 'app.js'), 'utf-8'));
+        } catch (e) {
+            res.end(jsCache);
+        }
         return;
     }
     if (pathname === '/favicon.svg') {
