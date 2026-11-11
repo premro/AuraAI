@@ -2482,7 +2482,7 @@ What would you like to work on?`;
     }
 
     // 9. Online Knowledge Lookup (Wikipedia - only when genuinely appropriate)
-    const isProcedureOrIT = /\b(how to|install|setup|deploy|push|gpo|command|cmd|powershell|script|configure|troubleshoot|fix|error|uninstall|migrate)\b/i.test(p);
+    const isProcedureOrIT = /\b(install|silent|deploy|push|gpo|command|cmd|powershell|script|configure|uninstall|migrate|dcagent|endpoint\s*central|crowdstrike|falcon)\b/i.test(p);
     let wikiResult = null;
     if (!isProcedureOrIT) {
         wikiResult = await fetchWikiKnowledge(rawPrompt);
@@ -2491,8 +2491,29 @@ What would you like to work on?`;
         return normalizeText(wikiResult);
     }
 
-    // 10. Standard Technical & Administrative Procedure Guidance (Parametric Fallback)
-    if ((p.includes('how to') || p.includes('how do i') || p.includes('steps to') || p.includes('configure') || p.includes('setup') || p.includes('install')) && !p.includes('news')) {
+    // 10. Cooking, Recipes & Food Preparation
+    if (/\b(cook|bake|recipe|food|pasta|dish|cake|tea|coffee|dinner|lunch|breakfast|pizza|soup|bread|pie|curry|sauce|cookie|salad)\b/i.test(p)) {
+        const dish = rawPrompt.replace(/\b(how to|how do i|steps to|recipe for|make|cook|bake|prepare)\b/gi, '').trim();
+        const dishName = dish || 'the dish';
+        return `### 🍳 How to Make ${dishName.charAt(0).toUpperCase() + dishName.slice(1)}\n\n` +
+               `Here is a straightforward and delicious guide to preparing **${dishName}**:\n\n` +
+               `#### 🛒 Key Ingredients:\n` +
+               `- Main base / core ingredients (freshly prepared or measured to portion)\n` +
+               `- Seasoning: salt, freshly cracked black pepper, and herbs / spices of choice\n` +
+               `- Cooking fat: olive oil, butter, or cooking oil\n` +
+               `- Optional aromatics: minced garlic, onions, or fresh herbs for extra flavor\n\n` +
+               `#### 👩‍🍳 Preparation & Cooking Steps:\n` +
+               `1. **Prep & Mise en Place**: Gather and prep all ingredients. Wash, chop, and measure beforehand for smooth cooking.\n` +
+               `2. **Base Preparation**: Heat oil or butter in a pan/pot over medium heat. Sauté aromatics (such as onions and garlic) until fragrant and translucent.\n` +
+               `3. **Main Cooking**: Add the main ingredients. Simmer, roast, or stir according to desired texture, adjusting heat to cook evenly without burning.\n` +
+               `4. **Season & Taste**: Taste and adjust salt, acidity (such as a splash of lemon juice or vinegar), and seasonings to balance the flavors.\n` +
+               `5. **Garnish & Serve**: Remove from heat and serve warm with fresh herbs or garnishes!\n\n` +
+               `*Tip: Adjust quantities and spices according to your personal taste and dietary preferences.*`;
+    }
+
+    // 11. IT Administration & Software Deployment Procedure Guidance (Strictly IT only)
+    const isEnterpriseIT = /\b(install|silent|deploy|uninstall|configure|gpo|powershell|cmd|agent|service|server|linux|windows|macos|cli|package|driver|firmware|port|firewall|dns|sysadmin)\b/i.test(p);
+    if (isEnterpriseIT && !p.includes('news')) {
         const topic = rawPrompt.replace(/\b(how to|how do i|steps to|guide for|please explain)\b/gi, '').trim();
         const title = topic || rawPrompt;
         return '### 📋 Standard Procedure Guide: ' + title + '\n\n' +
@@ -2509,10 +2530,14 @@ What would you like to work on?`;
                '> **Note**: Procedure follows standard enterprise deployment conventions. Verify against your specific tenant, operating system version, or release notes for custom switches.\n';
     }
 
-    // 11. Conversational Fallback
-    return `I received your query regarding **${rawPrompt}**.\n\n` +
-           `• **Context**: ${rawPrompt}\n\n` +
-           `Please let me know if you would like me to look up official documentation or provide additional technical steps!`;
+    // 12. General Knowledge & Conversational Fallback
+    const cleanTopic = rawPrompt.replace(/\b(how to|how do i|what is|can you explain|tell me about)\b/gi, '').trim();
+    return `### 💡 Overview & Practical Steps: ${cleanTopic || rawPrompt}\n\n` +
+           `Here is a helpful, practical guide regarding **${cleanTopic || rawPrompt}**:\n\n` +
+           `1. **Core Concept**: Identify the goal and gather any required materials or information.\n` +
+           `2. **Step-by-Step Approach**: Break the process down into clear, manageable steps and follow them in order.\n` +
+           `3. **Key Considerations**: Focus on best practices, common pitfalls to avoid, and consistent results.\n\n` +
+           `*Feel free to ask for more specific details, steps, or adaptations!*`;
 }
 
 function readRequestBody(req) {

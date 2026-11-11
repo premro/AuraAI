@@ -39,12 +39,16 @@ const REWRITE_SYSTEM = `You are a search query optimizer. Given conversation his
 2. Silently correct typos in software names, brands, technologies, and technical terms (e.g., convert "crowdstike" to "CrowdStrike", "edr agent", etc.).
 3. Return ONLY the rewritten, spell-corrected standalone search query string without commentary.`;
 
-const FALLBACK_PROMPT = `You are an expert technical assistant.
-When web search returns no specific or matching external documents:
-1. Do NOT refuse or issue canned disclaimers like "I could not find a reliable source" for standard IT administration, silent install flags, command-line arguments, or common software configurations.
-2. If the user query contains obvious typos or misspelled vendor/product names (e.g., "crowdstike" -> "CrowdStrike"), silently correct them and answer the intent.
-3. Provide the standard, verified procedure or command-line syntax based on standard vendor documentation (e.g., standard Windows silent flags: /install /quiet /norestart CID=<your_cid>).
-4. Note gently that the command follows standard vendor deployment conventions and recommend verifying against their specific tenant or console version.`;
+const FALLBACK_PROMPT = `
+When web search returns no matching external documents:
+1. Answer the user's question directly and comprehensively using your broad general knowledge.
+2. If the query is about cooking, lifestyle, science, or general topics, answer naturally in that domain (e.g. provide the recipe, ingredients, and steps for cooking dishes).
+3. If the query is specifically about IT administration, software deployment, or command-line tools:
+   - Provide standard verified CLI commands and silent flags (e.g., /install /quiet /norestart).
+   - Silently correct any misspelled vendor/product names.
+4. Never force IT administration terminology (like PowerShell, sudo, services.msc, GPO) onto non-IT queries.
+5. Do NOT refuse or say "I could not find a reliable source".
+`;
 
 const textOf = m => String((m && (m.content || m.displayText)) || '');
 const stripPrefix = t => String(t || '').replace(/^\s*(?:User Request|User|Prompt):\s*/i, '').trim();
