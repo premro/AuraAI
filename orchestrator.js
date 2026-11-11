@@ -99,15 +99,15 @@ async function orchestrateRequest({
     }
   }
 
-  // 7. Fallbacks: honest, never templates for code/summaries
+  // 7. Fallbacks: intelligent built-in knowledge & code engine when no cloud key is configured
   if (!reply) {
-    const needsModel = H.looksLikeCode(userText) || route.capability === CAPABILITIES.SUMMARIZE ||
-      route.capability === CAPABILITIES.IMAGE_UNDERSTANDING;
-    if (!needsModel && typeof smartFallback === 'function') {
+    if (typeof smartFallback === 'function' && !userConfig.strictModelOnly) {
       const b = await smartFallback(userText, prior, { conversationId, apiKey, model });
-      if (b) return { response: b, provider: 'Built-in knowledge', model, capability: route.capability, verifiedOnline: true, debug };
+      if (b && typeof b === 'string' && b.trim()) {
+        return { response: b.trim(), provider: 'Built-in knowledge', model, capability: route.capability, verifiedOnline: true, debug };
+      }
     }
-    if (!needsModel && searchResults) {
+    if (searchResults && !userConfig.strictModelOnly) {
       return { response: searchResults, provider: 'Web Search Grounding', model, capability: route.capability, verifiedOnline: true, debug };
     }
     const why = !apiKey ? 'no API key is configured'

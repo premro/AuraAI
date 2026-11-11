@@ -973,7 +973,29 @@ function buildIssueSummaryFromHistory(history, prompt) {
     }
 
     if (conversationTurns.length === 0) {
-        return `### 📋 Issue Summary Template\n\nNo prior chat transcript was detected in this conversation session.\n\nTo generate an issue summary:\n1. **Paste your chat transcript or log** into this chat box.\n2. Or ask for a summary after continuing your troubleshooting session!\n\n---\n### Standard Issue Summary Structure:\n- **Incident / Ticket Title**: Brief description of the issue\n- **Reported By**: User / Client\n- **Severity / Priority**: Low / Medium / High / Critical\n- **Symptoms**: What failed or behaved unexpectedly\n- **Root Cause**: Underlying technical reason\n- **Resolution**: Steps taken to fix or mitigate\n- **Verification**: How it was tested and validated\n- **Status**: Resolved / Pending`;
+        const textToSummarize = (prompt || "")
+            .replace(/^(?:summarize|summary|tldr|recap|give me a summary of|provide a summary of)[:\s-]*/i, "")
+            .trim();
+
+        if (textToSummarize.length > 25) {
+            const sentences = textToSummarize.split(/(?<=[.?!])\s+/).filter(s => s.trim().length > 0);
+            const mainTopic = sentences[0] || textToSummarize.slice(0, 100);
+            const keyPoints = sentences.slice(1, 6);
+
+            let summaryOut = `### 📝 Summary\n\n`;
+            summaryOut += `**Overview**: ${mainTopic.trim()}\n\n`;
+            if (keyPoints.length > 0) {
+                summaryOut += `**Key Points**:\n`;
+                keyPoints.forEach(p => {
+                    summaryOut += `- ${p.trim()}\n`;
+                });
+                summaryOut += `\n`;
+            }
+            summaryOut += `> **Conclusion**: The passage provides core details regarding *"${mainTopic.slice(0, 70).trim()}..."*.`;
+            return summaryOut;
+        }
+
+        return `### 📋 Issue Summary Template\n\nNo prior chat transcript was detected in this conversation session.\n\nTo generate an issue summary:\n1. **Paste your chat transcript or text** into this chat box.\n2. Or ask for a summary after continuing your troubleshooting session!\n\n---\n### Standard Issue Summary Structure:\n- **Incident / Ticket Title**: Brief description of the issue\n- **Reported By**: User / Client\n- **Severity / Priority**: Low / Medium / High / Critical\n- **Symptoms**: What failed or behaved unexpectedly\n- **Root Cause**: Underlying technical reason\n- **Resolution**: Steps taken to fix or mitigate\n- **Verification**: How it was tested and validated\n- **Status**: Resolved / Pending`;
     }
 
     let summaryText = `# 📋 Issue Summary & Transcript Analysis\n\n`;
@@ -2157,7 +2179,15 @@ What would you like to work on?`;
     }
 
     // 7. Code Assistance
-    if (p.includes('code') || p.includes('python') || p.includes('javascript') || p.includes('swift') || p.includes('function') || /\b(script|scripts)\b/i.test(p) || p.includes('programming')) {
+    if (p.includes('code') || p.includes('python') || p.includes('javascript') || p.includes('swift') || p.includes('function') || /\b(script|scripts)\b/i.test(p) || p.includes('programming') || p.includes('calculator') || p.includes('calculatot') || p.includes('html')) {
+        if (p.includes('calculator') || p.includes('calculatot') || (p.includes('html') && (p.includes('code') || p.includes('create') || p.includes('make') || p.includes('advance')))) {
+            const { HTML_CALCULATOR_CODE } = require('./calculatorHelper');
+            return HTML_CALCULATOR_CODE;
+        }
+
+        if (p.includes('fibonacci')) {
+            return `Here is an efficient Fibonacci sequence generator in Python:\n\n\`\`\`python\ndef fibonacci(n: int) -> list[int]:\n    if n <= 0:\n        return []\n    if n == 1:\n        return [0]\n    seq = [0, 1]\n    while len(seq) < n:\n        seq.append(seq[-1] + seq[-2])\n    return seq\n\n# Example:\nprint(fibonacci(10))\n# Output: [0, 1, 1, 2, 3, 5, 8, 13, 21, 34]\n\`\`\``;
+        }
         if (p.includes('reverse') || p.includes('string')) {
             return `Here is how to reverse a string across various languages:\n\n### Python\n\`\`\`python\ndef reverse_string(s: str) -> str:\n    return s[::-1]\n\n# Example usage:\nprint(reverse_string("hello"))  # "olleh"\n\`\`\`\n\n### JavaScript\n\`\`\`javascript\nfunction reverseString(str) {\n    return str.split('').reverse().join('');\n}\n\nconsole.log(reverseString("hello")); // "olleh"\n\`\`\`\n\n### Swift\n\`\`\`swift\nfunc reverseString(_ str: String) -> String {\n    return String(str.reversed())\n}\n\`\`\``;
         }

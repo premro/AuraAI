@@ -67,5 +67,41 @@ const base = { callGeminiAPI: gem, userConfig: { apiKey: 'AIzaTEST' } };
   });
   assert(r.response && r.response.includes('Group Policy') && !r.response.includes('could not find a reliable source'), 'J: typo tolerance and gpo install');
 
-  console.log('ALL TESTS PASSED (A through J)');
+  // K: Summary without API key produces structured summary with Overview & Key Points
+  r = await orchestrateRequest({
+    prompt: "summarize: In 1969, Apollo 11 was the American spaceflight that first landed humans on the Moon. Commander Neil Armstrong and Lunar Module pilot Buzz Aldrin landed the Apollo Lunar Module Eagle on July 20, 1969, at 20:17 UTC, and Armstrong became the first person to step onto the Moon.",
+    history: [],
+    userConfig: { apiKey: "" },
+    generateSmartResponseFallback: server.generateSmartResponse
+  });
+  assert(r.response && r.response.includes("Summary") && r.response.includes("Moon") && !r.response.includes("could not reach an AI model"), "K: text summarization works");
+
+  // L: HTML Calculator code generation works in new chat without API key
+  r = await orchestrateRequest({
+    prompt: "html code for advance calculatot",
+    history: [],
+    userConfig: { apiKey: "" },
+    generateSmartResponseFallback: server.generateSmartResponse
+  });
+  assert(r.response && r.response.includes("<!DOCTYPE html>") && r.response.includes("calculator") && !r.response.includes("could not reach an AI model"), "L: html calculator code works");
+
+  // M: Python code generation works in new chat without API key
+  r = await orchestrateRequest({
+    prompt: "write a python function to reverse a string",
+    history: [],
+    userConfig: { apiKey: "" },
+    generateSmartResponseFallback: server.generateSmartResponse
+  });
+  assert(r.response && r.response.includes("reverse_string") && r.response.includes("```python") && !r.response.includes("could not reach an AI model"), "M: python code works");
+
+  // N: General question works in new chat without API key
+  r = await orchestrateRequest({
+    prompt: "what is photosynthesis?",
+    history: [],
+    userConfig: { apiKey: "" },
+    generateSmartResponseFallback: server.generateSmartResponse
+  });
+  assert(r.response && (r.response.includes("photosynthesis") || r.response.includes("Photosynthesis")) && !r.response.includes("could not reach an AI model"), "N: general question works");
+
+  console.log("ALL TESTS PASSED (A through N)");
 })().catch(e => { console.error('FAIL', e.message); process.exit(1); });
