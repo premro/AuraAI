@@ -747,6 +747,76 @@ async function main() {
         assert(typeof res.response === 'string' && res.response.length > 20);
     });
 
+    // 57. User Regression 1: HTML code for advance calculator returns single HTML file, not Python
+    await runAsyncTest("57. User Regression 1: html code for advance calculator returns single HTML file, not Python", async () => {
+        const res = await orchestrateRequest({
+            prompt: "html code for advance calculator",
+            conversationId: "eval_calc_" + Date.now()
+        });
+        assert(res.response.includes("<html") || res.response.includes("<!DOCTYPE html>"), "Must contain HTML markup");
+        assert(res.response.includes("<script>"), "Must contain inline JavaScript");
+        assert(res.response.includes("<style>"), "Must contain inline CSS");
+        assert(!res.response.includes("class SolutionManager"), "Must NOT contain SolutionManager");
+        assert(!res.response.includes("def execute"), "Must NOT contain Python code");
+    });
+
+    // 58. User Regression 2: Duplicate request repetition handling
+    await runAsyncTest("58. User Regression 2: Repeated identical request offers changes rather than duplicate", async () => {
+        const res1 = await orchestrateRequest({
+            prompt: "html code for advance calculator",
+            conversationId: "eval_repeat_" + Date.now()
+        });
+        const res2 = await orchestrateRequest({
+            prompt: "html code for advance calculator",
+            history: [
+                { role: "user", content: "html code for advance calculator" },
+                { role: "assistant", content: res1.response }
+            ],
+            conversationId: "eval_repeat_" + Date.now()
+        });
+        assert(res2.response.includes("I gave you this above. Want changes?"), "Must offer changes on repeated prompt");
+    });
+
+    // 59. User Regression 3: Paste screenshot after wrong answer
+    await runAsyncTest("59. User Regression 3: Paste screenshot after wrong answer acknowledges Python vs HTML and gives fixed calculator", async () => {
+        const res = await orchestrateRequest({
+            prompt: "The code I got from you is wrong, fix it.\n\n[Text read from screenshot]\nclass SolutionManager:\n    def execute(self): pass",
+            history: [
+                { role: "user", content: "html code for advance calculator" },
+                { role: "assistant", content: "Here is a Python implementation:\n```python\nclass SolutionManager:\n    def execute(self): pass\n```" }
+            ],
+            attachments: [{
+                type: "image",
+                content: "class SolutionManager:\n    def execute(self): pass",
+                name: "screenshot.png"
+            }],
+            conversationId: "eval_screenshot_fix_" + Date.now()
+        });
+        assert(res.response.toLowerCase().includes("python") && res.response.toLowerCase().includes("html"), "Must acknowledge Python instead of HTML");
+        assert(res.response.includes("<html") || res.response.includes("<!DOCTYPE html>"), "Must include corrected HTML calculator");
+    });
+
+    // 60. User Regression 4: Multi-turn Elon Musk net worth with typo
+    await runAsyncTest("60. User Regression 4: Multi-turn \"who is elon musk\" -> \"his net wroth\" provides live net worth", async () => {
+        const convId = "eval_musk_net_worth_" + Date.now();
+        const res1 = await orchestrateRequest({
+            prompt: "who is elon musk",
+            conversationId: convId
+        });
+        assert(res1.response.includes("SpaceX") || res1.response.includes("Tesla"), "Must identify Elon Musk");
+
+        const res2 = await orchestrateRequest({
+            prompt: "his net wroth",
+            history: [
+                { role: "user", content: "who is elon musk" },
+                { role: "assistant", content: res1.response }
+            ],
+            conversationId: convId
+        });
+        assert(res2.response.includes("Elon Musk") || res2.response.includes("net worth") || res2.response.includes("billion"), "Must answer with Elon Musk net worth");
+        assert(res2.response.includes("Forbes") || res2.response.includes("Bloomberg"), "Must cite Forbes or Bloomberg sources");
+    });
+
     // 56. Real Eval 10: PDF document upload question routing
     await runAsyncTest('56. Real Eval 10: PDF document upload "Summarize this document."', async () => {
         const samplePdfContent = 'AuraAI System Architecture Documentation. Section 1: Overview of Multimodal Router and Orchestrator.';

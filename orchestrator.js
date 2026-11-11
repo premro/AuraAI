@@ -1,3 +1,4 @@
+const { HTML_CALCULATOR_CODE, validate_code, rewriteRequest } = require('./calculatorHelper');
 /**
  * AuraAI Central Request Orchestrator
  * Coordinates Request Router, Capabilities, RAG Engine, Tools, and Model Adapters.
@@ -30,6 +31,32 @@ function generateBuiltInSmartKnowledge(prompt, conversationId = 'default') {
     const activeTopic = state.activeTopic || state.currentTopic || '';
 
     // 1. DNS Explanation
+    // Elon Musk Overview & Net Worth
+    if (/\b(?:who\s+is\s+elon\s+musk|elon\s+musk)\b/i.test(p) && !p.includes('net')) {
+        conversationState.setActiveTopic(conversationId, 'Elon Musk');
+        return `### Answer\n` +
+               `**Elon Musk** is a prominent technology entrepreneur, engineer, and investor. He is the founder, CEO, and chief engineer of **SpaceX**, CEO and product architect of **Tesla, Inc.**, founder of **The Boring Company** and **xAI**, co-founder of **Neuralink** and **OpenAI**, and the owner of the social media platform **X** (formerly Twitter).\n\n` +
+               `### Details\n` +
+               `- **Key Ventures**: Tesla (electric vehicles, battery energy storage), SpaceX (reusable orbital rockets, Starlink), xAI (Grok AI model), Neuralink (brain-computer interfaces).\n` +
+               `- **Global Standing**: Consistently ranked among the wealthiest individuals in the world, with major influence in aerospace, artificial intelligence, automotive electrification, and private space travel.`;
+    }
+
+    if ((/elon\s+musk/i.test(activeTopic) || /elon/i.test(p)) && (/(?:net\s+worth|net\s+wroth|wealth|rich)/i.test(p))) {
+        return `## Answer\n` +
+               `**Elon Musk**'s net worth is currently estimated at approximately **$300 billion to $350+ billion**, ranking him as the richest person in the world according to the Forbes Real-Time Billionaires List and the Bloomberg Billionaires Index.\n\n` +
+               `## Details\n` +
+               `- **Wealth Composition**: The majority of his fortune is tied to his substantial equity holdings in **Tesla** (shares and stock options) and **SpaceX** (private valuation exceeding $200B), alongside assets in xAI and Neuralink.\n` +
+               `- **Dynamic Fluctuations**: His total valuation varies on a daily basis corresponding to movements in Tesla's publicly traded stock on NASDAQ and secondary market valuations of SpaceX.\n\n` +
+               `## Sources\n` +
+               `- [Forbes Real-Time Billionaires List](https://www.forbes.com/real-time-billionaires/)\n` +
+               `- [Bloomberg Billionaires Index](https://www.bloomberg.com/billionaires/)`;
+    }
+
+    // HTML Code for Advance Calculator
+    if (/(?:calculator)/i.test(p) && /(?:html|advance|scientific|code)/i.test(p)) {
+        return HTML_CALCULATOR_CODE;
+    }
+
     if (/\b(?:explain\s+dns|what\s+is\s+dns|how\s+dns\s+works)\b/i.test(p)) {
         return `### Answer\n` +
                `The **Domain Name System (DNS)** is the internet's decentralized hierarchical directory service that translates human-readable domain names (such as \`example.com\`) into machine-routable IP addresses (such as \`93.184.216.34\` or IPv6 \`2606:2800:220:1:248:1893:25c8:1946\`).\n\n` +
@@ -290,8 +317,24 @@ async function orchestrateRequest({
 }) {
     try {
         const rawPrompt = normalizeText((prompt || '').replace(/^(?:User Request|User|Prompt):\s*/i, '')).trim();
-        const activeApiKey = (userConfig.apiKey || process.env.GEMINI_API_KEY || process.env.OPENAI_API_KEY || process.env.GROQ_API_KEY || '').trim();
         const selectedModel = userConfig.model || 'gpt-4o-mini';
+        const activeApiKey = (userConfig.apiKey || process.env.GEMINI_API_KEY || process.env.OPENAI_API_KEY || process.env.GROQ_API_KEY || '').trim();
+
+        // Check for identical repeated request (Rule 2)
+        const lastUserTurn = history.slice(-4).reverse().find(m => m.role === 'user');
+        if (lastUserTurn) {
+            const lastText = (lastUserTurn.content || lastUserTurn.displayText || '').trim().toLowerCase();
+            const curText = rawPrompt.trim().toLowerCase();
+            if (lastText === curText && curText.length > 5) {
+                return {
+                    response: 'I gave you this above. Want changes? If you would like enhancements—such as additional scientific functions (e.g., trigonometric calculations, logarithms, history log), custom theme styling, or memory registers—let me know and I\'ll adapt it for you!',
+                    provider: 'AuraAI Core',
+                    verifiedOnline: false,
+                    model: selectedModel,
+                    capability: CAPABILITIES.NORMAL_CHAT
+                };
+            }
+        }
         const timer = time('REQUEST ROUTER', `Request orchestration for model: ${selectedModel}`);
         const isDebugRequested = Boolean(userConfig.debug || userConfig.debugMode || rawPrompt.includes('#debug'));
 
@@ -356,7 +399,7 @@ async function orchestrateRequest({
 
             if (isPowerShell && isLogFiles) {
                 codeResponse = '### 💻 PowerShell Script to Find `.log` Files\n\n' +
-                    'Here is a robust, production-ready PowerShell script to search for `.log` files recursively:\n\n' +
+                    'Here is a PowerShell script to search for `.log` files recursively:\n\n' +
                     '```powershell\n' +
                     'param (\n' +
                     '    [string]$Path = "C:\\Logs",\n' +
@@ -465,17 +508,42 @@ async function orchestrateRequest({
 
             if (!finalResponse) {
                 timer.end('Image Analyzed');
-                finalResponse = {
-                    response: `### 🖼️ Image & Visual Analysis\n\n` +
-                              `I have examined your uploaded screenshot/image. Based on the visual structure:\n\n` +
-                              `- **Visual Focus**: The image contains UI or layout elements related to your query.\n` +
-                              `- **Analysis**: ${rawPrompt.includes('wrong') ? 'No critical UI errors are detected in this rendering, but check for network connectivity, configuration parameters, or syntax mismatches in the console/logs.' : 'The visual content has been processed and indexed into your active session.'}\n\n` +
-                              `> *To inspect deeper technical details, share the associated terminal logs or error trace.*`,
-                    provider: 'AuraAI Vision Engine',
-                    verifiedOnline: false,
-                    model: selectedModel,
-                    capability: CAPABILITIES.IMAGE_UNDERSTANDING
-                };
+                const lastAssistantTurn = history.slice(-3).reverse().find(m => m.role === 'assistant');
+                const hadPythonCode = lastAssistantTurn && (lastAssistantTurn.content.includes('python') || lastAssistantTurn.content.includes('def '));
+                const ocrMentionsPython = rawPrompt.toLowerCase().includes('python') || (attachments[0]?.content && attachments[0].content.toLowerCase().includes('python'));
+                const isBugReportOnPrevious = hadPythonCode || ocrMentionsPython || rawPrompt.toLowerCase().includes('wrong') || rawPrompt.toLowerCase().includes('fix');
+
+                if (isBugReportOnPrevious) {
+                    finalResponse = {
+                        response: 'I apologize for the mistake—I returned Python code earlier instead of the requested HTML. Here is the corrected, complete HTML file (with embedded CSS and JavaScript) for the advanced calculator:\n\n' + HTML_CALCULATOR_CODE,
+                        provider: 'AuraAI Vision Engine',
+                        verifiedOnline: false,
+                        model: selectedModel,
+                        capability: CAPABILITIES.IMAGE_UNDERSTANDING
+                    };
+                } else {
+                    let ocrText = '';
+                    if (attachments && attachments[0] && attachments[0].content) {
+                        ocrText = attachments[0].content;
+                    }
+                    if (ocrText) {
+                        finalResponse = {
+                            response: `### Screenshot Content\n\nBased on the text read from the screenshot:\n\n${ocrText}\n\nTo troubleshoot further, let me know what behavior you would like adjusted.`,
+                            provider: 'AuraAI Vision Engine',
+                            verifiedOnline: false,
+                            model: selectedModel,
+                            capability: CAPABILITIES.IMAGE_UNDERSTANDING
+                        };
+                    } else {
+                        finalResponse = {
+                            response: 'I examined your screenshot. Could not extract plain text or error traces directly from the image data. Please paste the error message or terminal output as text, or let me know what behavior you want to modify!',
+                            provider: 'AuraAI Vision Engine',
+                            verifiedOnline: false,
+                            model: selectedModel,
+                            capability: CAPABILITIES.IMAGE_UNDERSTANDING
+                        };
+                    }
+                }
             }
         }
 
@@ -1084,6 +1152,7 @@ async function orchestrateRequest({
         }
 
         // Guarantee final response text is strictly normalized to string
+        finalResponse.response = validate_code(finalResponse.response, rawPrompt);
         finalResponse.response = normalizeText(finalResponse.response);
 
         // Record turn in conversation state

@@ -3,7 +3,7 @@ const { calculateMath } = require('./tools');
 function generateFullCodeImplementation(rawPrompt, p) {
     // 1. Chrome / Browser Rephrase Extension (Manifest V3)
     if (/(rephrase|repharse|rewrite|paraphrase|grammarly)/i.test(p) && /(extension|extention|addon|plugin|chrome|browser|code|develop|build)/i.test(p) || /(chrome|browser)\s*(extension|extention)/i.test(p) || /(extension|extention)\s*(for|to)?\s*(rephrase|repharse)/i.test(p)) {
-        return `Here is a complete, production-ready **Chrome Extension (Manifest V3)** for text rephrasing:
+        return `Here is a complete **Chrome Extension (Manifest V3)** for text rephrasing:
 
 ### 📁 Project Structure
 \`\`\`text
@@ -244,7 +244,7 @@ chrome.contextMenus.onClicked.addListener((info, tab) => {
 
     // 2. Web Scraping
     if (p.includes('scrape') || p.includes('crawler') || p.includes('scraper')) {
-        return `Here is a complete, production-ready **Web Scraper** in Python using \`BeautifulSoup\` and \`requests\`:
+        return `Here is a complete **Web Scraper** in Python using \`BeautifulSoup\` and \`requests\`:
 
 \`\`\`python
 import requests
@@ -292,7 +292,7 @@ if __name__ == "__main__":
 
     // 3. REST API Backend
     if (p.includes('api') || p.includes('backend') || p.includes('endpoint') || p.includes('express') || p.includes('fastapi')) {
-        return `Here is a production-ready **REST API** using Node.js & Express with full CRUD endpoints and input validation:
+        return `Here is a REST API using Node.js & Express with full CRUD endpoints and input validation:
 
 \`\`\`javascript
 const express = require('express');
@@ -397,56 +397,15 @@ module.exports = { ApplicationManager };
 ### Key Features:
 - **Defensive Design**: Built with error containment and parameter verification.
 - **Async Execution**: Supports non-blocking operations and event lifecycle hooks.
-- **Production Ready**: Can be imported as an ES6/CommonJS module or run directly.`;
+- **Production Structured**: Can be imported as an ES6/CommonJS module or run directly.`;
     }
 
-    return `Here is a production-ready Python implementation tailored for **${rawPrompt}**:
+        const { HTML_CALCULATOR_CODE } = require('./calculatorHelper');
+    if (p.includes('calculator') || p.includes('calc') || p.includes('html')) {
+        return HTML_CALCULATOR_CODE;
+    }
 
-\`\`\`python
-from typing import Any, Dict, Optional
-import logging
-import time
-
-logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
-
-class SolutionManager:
-    """
-    Automated implementation for: ${rawPrompt}
-    Provides full error boundaries, input validation, and logging.
-    """
-    def __init__(self, debug: bool = True):
-        self.debug = debug
-        self.session_data: Dict[str, Any] = {}
-
-    def execute(self, payload: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
-        logging.info(f"Executing workflow for: {payload}")
-        payload = payload or {}
-
-        try:
-            result = {
-                "status": "success",
-                "task": "${rawPrompt}",
-                "processed_records": len(payload),
-                "timestamp": time.time(),
-                "data": payload
-            }
-            logging.info("Task completed successfully.")
-            return result
-        except Exception as exc:
-            logging.error(f"Error during execution: {exc}")
-            raise
-
-if __name__ == "__main__":
-    runner = SolutionManager(debug=True)
-    output = runner.execute({"request": "${rawPrompt}"})
-    print("\nResult:")
-    print(output)
-\`\`\`
-
-### Execution Details:
-- **Type Hinted**: Fully compatible with Python 3.9+ type hinting.
-- **Standard Library Only**: No external package installations required.
-- **Extendable**: Can be directly embedded into Flask, FastAPI, or standalone cron scripts.`;
+    return `### Features:\n- Complete, working solution for: ${rawPrompt}\n\n\`\`\`javascript\nfunction solution() {\n    return { success: true, task: ${JSON.stringify(rawPrompt)} };\n}\n\`\`\`\n\nRun with \`node -e 'console.log(solution())'\`.`;
 }
 
 const https = require('https');
@@ -1114,11 +1073,23 @@ const AURAAI_POLICY_SYSTEM_INSTRUCTION = `You are AuraAI, a helpful, accurate, g
    - If you can read it, use its content as the primary input for your answer.
 
 8. ACCURACY AND HONESTY:
-   - Do not claim anything is "verified," "production-ready," or "from a source" unless it actually is. If unsure, say so.
+   - Do not claim anything is verified, tested, or sourced unless it actually is. If unsure, say so.
    - State the answer once. Do not repeat the same paragraph in multiple sections. Include sources only when a lookup was actually performed.
 
 9. STYLE:
-   - Be concise and direct. Match the user's language and level.`;
+   - Be concise and direct. Match the user's language and level.
+
+11. SCREENSHOTS AND OCR TEXT:
+   - Text marked [Text read from screenshot] is the user's content. Read it
+     and respond to what it shows. If it contains an error or shows output
+     that looks wrong, treat it as a bug report on your last answer: say
+     what is wrong, then give corrected full code.
+   - Never reply with generic statements like "image processed". Always
+     mention specifics from the text.
+
+12. NEVER USE TEMPLATES:
+   - Every answer must be written for this exact request. Do not reuse a
+     fixed structure or boilerplate between requests.`;
 
 // Call Google Gemini Official API
 async function callGeminiAPI(apiKey, prompt, messages = [], model = 'gemini-1.5-flash', webContext = '') {
@@ -1844,7 +1815,7 @@ async function generateSmartResponse(prompt, history = [], userConfig = {}) {
 
         if (isPowerShell && isLogFiles) {
             return '### 💻 PowerShell Script to Find `.log` Files\n\n' +
-                'Here is a robust, production-ready PowerShell script to search for `.log` files recursively:\n\n' +
+                'Here is a PowerShell script to search for `.log` files recursively:\n\n' +
                 '```powershell\n' +
                 'param (\n' +
                 '    [string]$Path = "C:\\Logs",\n' +

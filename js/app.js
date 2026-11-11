@@ -1779,7 +1779,7 @@ function setupEventListeners() {
             } else if (preset === 'news') {
                 elements.systemPromptInput.value = "You are an objective, real-time news and intelligence analyst. Summarize breaking events factually with citations, sources, and context.";
             } else if (preset === 'coder') {
-                elements.systemPromptInput.value = "You are an elite principal software engineer. Provide clean, secure, idiomatic, well-commented, and production-ready code with concise explanations.";
+                elements.systemPromptInput.value = "You are an elite principal software engineer. Provide clean, secure, idiomatic, well-commented, and production quality code with concise explanations.";
             } else if (preset === 'data') {
                 elements.systemPromptInput.value = "You are a senior data analyst and financial modeling expert. Analyze spreadsheets, datasets, outliers, statistical summaries, and trends.";
             }
