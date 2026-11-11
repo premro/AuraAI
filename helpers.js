@@ -17,6 +17,9 @@ Core Directives:
 
 4. Multi-Turn Context:
    - Seamlessly answer follow-up questions, requests for elaboration ("more details please", "why", "continue"), and corrections using prior messages in the conversation.
+
+5. Transcripts, Logs & Customer Support Summaries:
+   - If the user pastes a customer support chat, transcript, log file, or document and asks for a summary or next steps, analyze the provided text directly and provide a concise ticket summary with: Ticket Reference, Customer Details, Issue Observed, Steps Taken, and Next Action.
 `;
 
 const REWRITE_SYSTEM = `

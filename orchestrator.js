@@ -69,26 +69,67 @@ async function handleChatRequest(options) {
     }
   }
 
-  const provider = options.provider || pickProvider(apiKey) || (model.includes('gemini') ? 'gemini' : 'openai');
+  let provider = options.provider || pickProvider(apiKey) || (model.includes('gemini') ? 'gemini' : 'openai');
 
   const debug = { conversationId, provider, model, keyPresent: !!apiKey };
   const prior = H.dropCurrentTurn(history, userPrompt);
 
-  // Model caller adapter supporting both { messages } and (system, prompt, history)
+  // Model caller adapter with Error Auto-Switching between Groq and Gemini
   async function callModel(system, text, hist = []) {
     let result = null;
     if (typeof options.callModelFn === 'function') {
       result = await options.callModelFn({ systemPrompt: system, prompt: text, model, history: hist });
     } else {
+      const activeProvider = provider;
+      const activeKey = apiKey;
+      const activeModel = model;
+
+      // Primary provider attempt
       try {
-        if (provider === 'gemini' && options.callGeminiAPI) {
-          result = await options.callGeminiAPI(apiKey, text, hist, model, system);
-        } else if (provider === 'openai' && options.callOpenAIAPI) {
-          result = await options.callOpenAIAPI(apiKey, text, hist, model, system);
+        if (activeProvider === 'gemini' && options.callGeminiAPI) {
+          result = await options.callGeminiAPI(activeKey, text, hist, activeModel, system);
+        } else if (activeProvider === 'openai' && options.callOpenAIAPI) {
+          result = await options.callOpenAIAPI(activeKey, text, hist, activeModel, system);
         }
       } catch (e) {
-        console.error('[orchestrator] model call failed:', e && e.message);
+        console.error(`[orchestrator] ${activeProvider} model call failed:`, e && e.message);
         debug.error = e && e.message;
+      }
+
+      // Error Auto-Switching: If primary was Groq/OpenAI and it failed or was rate limited, auto-retry with Gemini
+      if (!result && activeProvider === 'openai' && options.callGeminiAPI) {
+        const geminiKey = process.env.GEMINI_API_KEY || (activeKey && activeKey.startsWith('AIza') ? activeKey : '');
+        if (geminiKey) {
+          console.warn('[orchestrator] Groq/OpenAI call failed or rate limited. Auto-switching to Google Gemini (gemini-1.5-flash)...');
+          try {
+            result = await options.callGeminiAPI(geminiKey, text, hist, 'gemini-1.5-flash', system);
+            if (result) {
+              debug.fallbackProvider = 'gemini';
+              debug.fallbackModel = 'gemini-1.5-flash';
+              debug.error = null;
+            }
+          } catch (gemErr) {
+            console.error('[orchestrator] Gemini auto-switch retry failed:', gemErr && gemErr.message);
+          }
+        }
+      }
+
+      // Error Auto-Switching: If primary was Gemini and it failed, auto-retry with Groq/OpenAI
+      if (!result && activeProvider === 'gemini' && options.callOpenAIAPI) {
+        const groqKey = process.env.GROQ_API_KEY || process.env.OPENAI_API_KEY || (activeKey && (activeKey.startsWith('gsk_') || activeKey.startsWith('sk-')) ? activeKey : '');
+        if (groqKey) {
+          console.warn('[orchestrator] Gemini call failed. Auto-switching to Groq (llama-3.3-70b-versatile)...');
+          try {
+            result = await options.callOpenAIAPI(groqKey, text, hist, 'llama-3.3-70b-versatile', system);
+            if (result) {
+              debug.fallbackProvider = 'openai';
+              debug.fallbackModel = 'llama-3.3-70b-versatile';
+              debug.error = null;
+            }
+          } catch (groqErr) {
+            console.error('[orchestrator] Groq auto-switch retry failed:', groqErr && groqErr.message);
+          }
+        }
       }
     }
     if (result && typeof result === 'object') {
@@ -100,9 +141,31 @@ async function handleChatRequest(options) {
   // 1. Resolve multi-turn context and handle follow-up phrases
   let userText = H.withAttachments(userPrompt, attachments);
   userText = normalizeTechTypos(userText);
+
+  // Detect pasted conversation transcripts, support tickets, and summary requests
+  const hasTranscriptSignals = /(?:customer|agent|client|support|caller|rep|engineer|tech|user|premnath\.[a-z]):\s*/i.test(userText) ||
+                               /\b\d{1,2}:\d{2}(?::\d{2})?\s*(?:AM|PM|am|pm)?\b/.test(userText) ||
+                               /\b[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+:/.test(userText);
+  const isSummaryRequest = /\b(summari[sz]e|summary|tl;?dr|ticket summary|action items?|next steps?)\b/i.test(userText);
+  const isPastedTranscriptOrLog = (hasTranscriptSignals || isSummaryRequest) && userText.length > 250;
+
+  // Long Input Handling (Payload Truncation & Token Safety)
+  const wordCount = (userText.trim().match(/\S+/g) || []).length;
+  const isLargeInput = wordCount > 2000 || userText.length > 8000;
+  if (isLargeInput && (process.env.GEMINI_API_KEY || (apiKey && apiKey.startsWith('AIza')) || options.callGeminiAPI)) {
+    console.log(`[orchestrator] Large input detected (${wordCount} words). Auto-routing to Google Gemini (gemini-1.5-flash) for 1M token safety.`);
+    provider = 'gemini';
+    model = 'gemini-1.5-flash';
+    apiKey = (apiKey && apiKey.startsWith('AIza')) ? apiKey : (process.env.GEMINI_API_KEY || apiKey);
+    debug.provider = provider;
+    debug.model = model;
+  }
+
   let resolvedQuery = userText;
 
-  if (prior.length > 0 && userPrompt.length < 120 && !attachments.length) {
+  if (isPastedTranscriptOrLog) {
+    resolvedQuery = "NO_SEARCH_NEEDED";
+  } else if (prior.length > 0 && userPrompt.length < 120 && !attachments.length) {
     if (provider) {
       try {
         const rewritten = await callModel(
@@ -137,9 +200,13 @@ async function handleChatRequest(options) {
 
   // 2. Fetch grounded search results unless marked unnecessary
   const route = analyzeRequest(userText, prior, attachments);
+  if (isPastedTranscriptOrLog) {
+    route.capability = CAPABILITIES.SUMMARIZE;
+  }
   debug.capability = route.capability;
   const isCode = route.capability === CAPABILITIES.CODE_GENERATION || H.looksLikeCode(userText);
-  const webSearchEnabled = options.webSearchEnabled !== false && userConfig.webSearch !== false && !isCode;
+  const isSummarize = route.capability === CAPABILITIES.SUMMARIZE || isPastedTranscriptOrLog;
+  const webSearchEnabled = options.webSearchEnabled !== false && userConfig.webSearch !== false && !isCode && !isSummarize;
 
   let searchResults = [];
   if (webSearchEnabled && resolvedQuery !== "NO_SEARCH_NEEDED") {

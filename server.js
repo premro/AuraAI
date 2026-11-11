@@ -2109,8 +2109,16 @@ async function generateSmartResponse(prompt, history = [], userConfig = {}) {
         return mathResult;
     }
 
+    // Detect transcripts, support chat logs, and summarization requests
+    const hasTranscriptSignals = /(?:customer|agent|client|support|caller|rep|engineer|tech|user):\s+/i.test(rawPrompt) ||
+                                 /\b\d{1,2}:\d{2}(?::\d{2})?\s*(?:AM|PM|am|pm)?\b/.test(rawPrompt) ||
+                                 /\b[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+:/.test(rawPrompt);
+    const isSummaryRequest = /\b(summari[sz]e|summary|tl;?dr|ticket summary|action items?|next steps?)\b/i.test(rawPrompt);
+    const isPastedTranscript = (hasTranscriptSignals || isSummaryRequest) && rawPrompt.length > 200;
+
     // 3. Issue Summary / Transcript Summarization Check
-    if (p.includes('issue summary') || 
+    if (isPastedTranscript ||
+        p.includes('issue summary') || 
         p.includes('summarize') || 
         p.includes('summary') || 
         p.includes('transcript') || 
@@ -2120,11 +2128,11 @@ async function generateSmartResponse(prompt, history = [], userConfig = {}) {
         return buildIssueSummaryFromHistory(history, rawPrompt);
     }
 
-    // 4. ManageEngine Endpoint Central Queries (Agent Installation vs Migration)
-    if ((p.includes('endpoint central') || p.includes('desktop central')) && (p.includes('agent') || p.includes('install') || p.includes('setup') || p.includes('deploy') || p.includes('dcagent'))) {
+    // 4. ManageEngine Endpoint Central Queries (Agent Installation vs Migration - ignore if transcript)
+    if (!isPastedTranscript && (p.includes('endpoint central') || p.includes('desktop central')) && (p.includes('agent') || p.includes('install') || p.includes('setup') || p.includes('deploy') || p.includes('dcagent'))) {
         return getEndpointCentralAgentInstallDoc();
     }
-    if ((p.includes('endpoint central') || p.includes('desktop central')) && (p.includes('migration') || p.includes('migrate') || p.includes('backup') || p.includes('restore') || p.includes('server'))) {
+    if (!isPastedTranscript && (p.includes('endpoint central') || p.includes('desktop central')) && (p.includes('migration') || p.includes('migrate') || p.includes('backup') || p.includes('restore') || p.includes('server'))) {
         return getEndpointCentralMigrationDoc();
     }
 
