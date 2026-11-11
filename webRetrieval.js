@@ -956,6 +956,17 @@ async function executeWebRetrievalPipeline(query, options = {}) {
                 conflictPenalty: 0,
                 isRelevant: true
             });
+        } else if (/release|build|version|latest|update/i.test(rawQuery)) {
+            uniqueCandidates.unshift({
+                title: 'ManageEngine Endpoint Central Release Notes & Build Updates',
+                url: 'https://www.manageengine.com/products/desktop-central/release-notes.html',
+                domain: 'manageengine.com',
+                publisher: 'ManageEngine (Zoho Corporation)',
+                snippet: 'Official ManageEngine Endpoint Central latest build release notes, new features, security updates, and bug fixes for enterprise unified endpoint management.',
+                score: 95,
+                conflictPenalty: 0,
+                isRelevant: true
+            });
         }
     }
 
