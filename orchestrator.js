@@ -28,7 +28,7 @@ async function orchestrateRequest({
     const timer = time('REQUEST ROUTER', `Request orchestration for model: ${selectedModel}`);
 
     // 1. Analyze request and select capability
-    const route = analyzeRequest(rawPrompt, history, attachments, userConfig);
+    const route = analyzeRequest(rawPrompt, history, attachments, userConfig, conversationId);
     log('MODEL SELECTED', selectedModel, { provider: getModelMetadata(selectedModel).provider });
 
     // Handle any newly attached documents
@@ -147,29 +147,56 @@ async function orchestrateRequest({
     }
 
     // -------------------------------------------------------------
-    // CAPABILITY 4: DIRECT URL READER
+    // CAPABILITY 4: DIRECT URL READER & STORED URL FOLLOW-UP
     // -------------------------------------------------------------
-    if (route.capability === CAPABILITIES.URL_READER && route.url) {
-        const retrieval = await webRetrieval.executeWebRetrievalPipeline(route.url);
-        if (retrieval && retrieval.success) {
-            if (activeApiKey) {
-                if (activeApiKey.startsWith('AIza') && callGeminiAPI) {
-                    const geminiReply = await callGeminiAPI(activeApiKey, rawPrompt, history, selectedModel, retrieval.webContext);
-                    if (geminiReply) return { response: geminiReply, provider: 'Google Gemini', model: selectedModel };
-                } else if ((activeApiKey.startsWith('sk-') || activeApiKey.startsWith('gsk_')) && callOpenAIAPI) {
-                    const openaiReply = await callOpenAIAPI(activeApiKey, rawPrompt, history, selectedModel, retrieval.webContext);
-                    if (openaiReply) return { response: openaiReply, provider: 'Frontier AI', model: selectedModel };
-                }
+    if (route.capability === CAPABILITIES.URL_READER) {
+        // Follow-up question targeting stored web source
+        if (route.isFollowUp && ragEngine.hasActiveSources(conversationId)) {
+            const activeSources = ragEngine.getActiveSources(conversationId);
+            const primarySource = activeSources[activeSources.length - 1];
+            const retrieved = ragEngine.retrieve(rawPrompt, conversationId, 5);
+
+            if (retrieved.passages && retrieved.passages.length > 0) {
+                let answer = `### 📄 Grounded Answer from [${primarySource.title}](${primarySource.url})\n\n`;
+                answer += `Based on the stored webpage content from **${primarySource.domain}**:\n\n`;
+                retrieved.passages.forEach((p, idx) => {
+                    answer += `${idx + 1}. ${p.text}\n\n`;
+                });
+                answer += `---\n*Source*: [${primarySource.url}](${primarySource.url})`;
+
+                timer.end('URL Follow-up Retrieved and Grounded');
+                return {
+                    response: answer,
+                    provider: 'AuraAI Source Memory',
+                    verifiedOnline: true,
+                    model: selectedModel,
+                    capability: route.capability
+                };
             }
-            const synth = webRetrieval.synthesizeAnswerFromRetrievedContent(rawPrompt, retrieval);
-            timer.end('URL Retrieved and Grounded');
-            return {
-                response: synth,
-                provider: 'AuraAI URL Reader',
-                verifiedOnline: true,
-                model: selectedModel,
-                capability: route.capability
-            };
+        }
+
+        if (route.url) {
+            const retrieval = await webRetrieval.executeWebRetrievalPipeline(route.url, { conversationId });
+            if (retrieval && retrieval.success) {
+                if (activeApiKey) {
+                    if (activeApiKey.startsWith('AIza') && callGeminiAPI) {
+                        const geminiReply = await callGeminiAPI(activeApiKey, rawPrompt, history, selectedModel, retrieval.webContext);
+                        if (geminiReply) return { response: geminiReply, provider: 'Google Gemini', model: selectedModel };
+                    } else if ((activeApiKey.startsWith('sk-') || activeApiKey.startsWith('gsk_')) && callOpenAIAPI) {
+                        const openaiReply = await callOpenAIAPI(activeApiKey, rawPrompt, history, selectedModel, retrieval.webContext);
+                        if (openaiReply) return { response: openaiReply, provider: 'Frontier AI', model: selectedModel };
+                    }
+                }
+                const synth = webRetrieval.synthesizeAnswerFromRetrievedContent(rawPrompt, retrieval);
+                timer.end('URL Retrieved and Grounded');
+                return {
+                    response: synth,
+                    provider: 'AuraAI URL Reader',
+                    verifiedOnline: true,
+                    model: selectedModel,
+                    capability: route.capability
+                };
+            }
         }
     }
 
@@ -178,7 +205,7 @@ async function orchestrateRequest({
     // -------------------------------------------------------------
     if (route.capability === CAPABILITIES.WEB_SEARCH) {
         const query = route.query || rawPrompt;
-        const retrieval = await webRetrieval.executeWebRetrievalPipeline(query);
+        const retrieval = await webRetrieval.executeWebRetrievalPipeline(query, { conversationId });
 
         if (retrieval) {
             // Check confidence level
@@ -280,7 +307,7 @@ async function orchestrateRequest({
 
     // Fall back to AuraAI local response generator
     if (generateSmartResponseFallback) {
-        const fallbackText = await generateSmartResponseFallback(rawPrompt, history, userConfig);
+        const fallbackText = await generateSmartResponseFallback(rawPrompt, history, { ...userConfig, conversationId });
         timer.end('Normal Chat fallback answered');
         return {
             response: fallbackText,

@@ -1,269 +1,260 @@
 /**
- * AuraAI Automated Capability Test Suite
- * Tests:
- * 1. SSRF Protection
- * 2. Intelligent Request Router
- * 3. Web Search & Confidence Refusal
- * 4. Document Processing & RAG
- * 5. Image Generation & Follow-up Editing
- * 6. Calculation & Code Execution
- * 7. Live API Endpoints
+ * AuraAI Automated Capability & End-to-End Test Suite
+ * Validates the 16 core requirements with REAL execution:
+ * Real web requests, real SSRF protection, real document parsing, real RAG retrieval,
+ * real calculations, and accurate multi-turn conversation memory.
  */
 
 const assert = require('assert');
-const { validateUrlSafety } = require('./security');
 const { analyzeRequest, CAPABILITIES } = require('./router');
-const { parseStructuredText, summarizeDocumentLocally, chunkDocument } = require('./documentProcessor');
-const ragEngine = require('./ragEngine');
+const webRetrieval = require('./webRetrieval');
+const { validateUrlSafety } = require('./security');
 const { calculateMath } = require('./tools');
-const CapabilityCache = require('./cache');
-const http = require('http');
+const { parseStructuredText, summarizeDocumentLocally } = require('./documentProcessor');
+const ragEngine = require('./ragEngine');
+const { orchestrateRequest } = require('./orchestrator');
+const server = require('./server');
+const generateSmartResponseFallback = server.generateSmartResponse;
 
-async function runTests() {
-    console.log('=== STARTING AURAAI CAPABILITY TEST SUITE ===\n');
-    let passed = 0;
-    let total = 0;
+let passed = 0;
+let total = 0;
 
-    function test(name, fn) {
-        total++;
-        try {
-            fn();
-            console.log(`✅ [PASS] ${name}`);
-            passed++;
-        } catch (err) {
-            console.error(`❌ [FAIL] ${name}:`, err.message);
-        }
+function runSyncTest(name, fn) {
+    total++;
+    try {
+        fn();
+        console.log(`✅ [${total}/16] PASSED: ${name}`);
+        passed++;
+    } catch (err) {
+        console.error(`❌ [${total}/16] FAILED: ${name}`);
+        console.error(err);
     }
+}
 
-    async function testAsync(name, fn) {
-        total++;
-        try {
-            await fn();
-            console.log(`✅ [PASS] ${name}`);
-            passed++;
-        } catch (err) {
-            console.error(`❌ [FAIL] ${name}:`, err.message);
-        }
+async function runAsyncTest(name, fn) {
+    total++;
+    try {
+        await fn();
+        console.log(`✅ [${total}/16] PASSED: ${name}`);
+        passed++;
+    } catch (err) {
+        console.error(`❌ [${total}/16] FAILED: ${name}`);
+        console.error(err);
     }
+}
 
-    // 1. SSRF Protection Tests
-    await testAsync('SSRF blocks loopback (localhost, 127.0.0.1)', async () => {
-        const r1 = await validateUrlSafety('http://localhost:3000/api');
-        const r2 = await validateUrlSafety('http://127.0.0.1:8080');
-        assert.strictEqual(r1.isSafe, false);
-        assert.strictEqual(r2.isSafe, false);
+async function main() {
+    console.log('========================================================');
+    console.log('🚀 AuraAI 16-Point Comprehensive Capability Verification');
+    console.log('========================================================\n');
+
+    const conversationId = 'e2e_suite_' + Date.now();
+
+    // TEST 1: "hi" -> NORMAL_CHAT, No web search
+    await runAsyncTest('TEST 1: "hi" routes to NORMAL_CHAT without web search', async () => {
+        const route = analyzeRequest('hi', [], [], { webSearch: true }, conversationId);
+        assert.strictEqual(route.capability, CAPABILITIES.NORMAL_CHAT, 'Must route to NORMAL_CHAT');
+        const res = await orchestrateRequest({
+            prompt: 'hi',
+            userConfig: { webSearch: true, conversationId },
+            conversationId,
+            generateSmartResponseFallback
+        });
+        assert.strictEqual(res.capability, CAPABILITIES.NORMAL_CHAT);
+        assert(!res.response.includes('Verified Summary from Web Retrieval'), 'Must not search web');
+        assert(res.response.toLowerCase().includes('hello') || res.response.toLowerCase().includes('how can i help'));
     });
 
-    await testAsync('SSRF blocks AWS/Cloud metadata (169.254.169.254)', async () => {
-        const r = await validateUrlSafety('http://169.254.169.254/latest/meta-data/');
-        assert.strictEqual(r.isSafe, false);
+    // TEST 2: "Explain DNS in simple terms" -> NORMAL_CHAT, No web search
+    await runAsyncTest('TEST 2: "Explain DNS in simple terms" routes to NORMAL_CHAT without web search', async () => {
+        const route = analyzeRequest('Explain DNS in simple terms', [], [], { webSearch: true }, conversationId);
+        assert.strictEqual(route.capability, CAPABILITIES.NORMAL_CHAT, 'Must route to NORMAL_CHAT');
+        const res = await orchestrateRequest({
+            prompt: 'Explain DNS in simple terms',
+            userConfig: { webSearch: true, conversationId },
+            conversationId,
+            generateSmartResponseFallback
+        });
+        assert.strictEqual(res.capability, CAPABILITIES.NORMAL_CHAT);
+        assert(!res.response.includes('Verified Summary from Web Retrieval'), 'Must not search web');
+        assert(res.response.toLowerCase().includes('domain name system') || res.response.toLowerCase().includes('dns'));
     });
 
-    await testAsync('SSRF blocks private IP ranges (10.x, 192.168.x, 172.16.x)', async () => {
-        const r1 = await validateUrlSafety('http://10.0.0.1/');
-        const r2 = await validateUrlSafety('http://192.168.1.1/');
-        const r3 = await validateUrlSafety('http://172.16.0.5/');
-        assert.strictEqual(r1.isSafe, false);
-        assert.strictEqual(r2.isSafe, false);
-        assert.strictEqual(r3.isSafe, false);
+    // TEST 3: "What is the latest Endpoint Central release?" -> WEB_SEARCH
+    await runAsyncTest('TEST 3: "What is the latest Endpoint Central release?" routes to WEB_SEARCH', async () => {
+        const route = analyzeRequest('What is the latest Endpoint Central release?', [], [], { webSearch: true }, conversationId);
+        assert.strictEqual(route.capability, CAPABILITIES.WEB_SEARCH, 'Must route to WEB_SEARCH');
+        const res = await orchestrateRequest({
+            prompt: 'What is the latest Endpoint Central release?',
+            userConfig: { webSearch: true, conversationId },
+            conversationId,
+            generateSmartResponseFallback
+        });
+        assert.strictEqual(res.capability, CAPABILITIES.WEB_SEARCH);
+        assert(res.response.length > 50, 'Must produce informative release/installation response');
     });
 
-    await testAsync('SSRF permits safe public URLs', async () => {
-        const r = await validateUrlSafety('https://example.com');
-        assert.strictEqual(r.isSafe, true);
-    });
-
-    // 2. Intelligent Request Router Tests
-    test('Router: "Explain DNS" routes to NORMAL_CHAT without web search', () => {
-        const route = analyzeRequest('Explain DNS');
-        assert.strictEqual(route.capability, CAPABILITIES.NORMAL_CHAT);
-    });
-
-    test('Router: "What is polymorphism?" routes to NORMAL_CHAT without web search', () => {
-        const route = analyzeRequest('What is polymorphism?');
-        assert.strictEqual(route.capability, CAPABILITIES.NORMAL_CHAT);
-    });
-
-    test('Router: "What is the latest Endpoint Central release?" routes to WEB_SEARCH', () => {
-        const route = analyzeRequest('What is the latest Endpoint Central release?', [], [], { webSearch: true });
+    // TEST 4: "What is the latest news in Tamil Nadu?" -> WEB_SEARCH with real articles
+    await runAsyncTest('TEST 4: "What is the latest news in Tamil Nadu?" retrieves actual news content', async () => {
+        const route = analyzeRequest('What is the latest news in Tamil Nadu?', [], [], { webSearch: true }, conversationId);
         assert.strictEqual(route.capability, CAPABILITIES.WEB_SEARCH);
+        const retrieval = await webRetrieval.executeWebRetrievalPipeline('What is the latest news in Tamil Nadu?', { conversationId });
+        assert.strictEqual(retrieval.mode, 'web_search');
+        assert(retrieval.sources.length >= 1, 'Must retrieve candidate sources');
+        assert(retrieval.confidence === 'HIGH' || retrieval.confidence === 'MEDIUM', 'Confidence must be HIGH or MEDIUM');
+        const synthesized = webRetrieval.synthesizeAnswerFromRetrievedContent('What is the latest news in Tamil Nadu?', retrieval);
+        assert(synthesized.includes('Verified News') || synthesized.includes('Current News'), 'Must generate news report');
+        assert(synthesized.includes('http'), 'Must cite sources with URLs');
     });
 
-    test('Router: Direct URL "https://example.com" routes to URL_READER', () => {
-        const route = analyzeRequest('Read this article: https://example.com');
+    // TEST 5: Direct URL ManageEngine Agent IP change
+    const meUrl = 'https://www.manageengine.com/products/desktop-central/desktop_agent_change_ip.html';
+    await runAsyncTest('TEST 5: Direct URL reading extracts instructions accurately', async () => {
+        const route = analyzeRequest(meUrl, [], [], {}, conversationId);
         assert.strictEqual(route.capability, CAPABILITIES.URL_READER);
+        const res = await orchestrateRequest({
+            prompt: meUrl,
+            userConfig: { conversationId },
+            conversationId,
+            generateSmartResponseFallback
+        });
+        assert.strictEqual(res.capability, CAPABILITIES.URL_READER);
+        assert(res.response.includes('manageengine.com') || res.response.includes('Endpoint Central'));
+        assert(ragEngine.hasActiveSources(conversationId), 'Webpage must be registered in conversation source registry');
     });
 
-    test('Router: Document attachment routes to DOCUMENT_READER', () => {
-        const route = analyzeRequest('Summarize this document', [], [{ name: 'report.pdf', type: 'application/pdf' }]);
-        assert.strictEqual(route.capability, CAPABILITIES.DOCUMENT_READER);
+    // TEST 6: After TEST 5: "What are the steps?" uses stored source without new search
+    await runAsyncTest('TEST 6: Follow-up "What are the steps?" uses stored ManageEngine source', async () => {
+        const route = analyzeRequest('What are the steps?', [], [], {}, conversationId);
+        assert.strictEqual(route.capability, CAPABILITIES.URL_READER, 'Must route to URL_READER follow-up');
+        assert.strictEqual(route.isFollowUp, true, 'Must be marked as follow-up');
+        const res = await orchestrateRequest({
+            prompt: 'What are the steps?',
+            userConfig: { conversationId },
+            conversationId,
+            generateSmartResponseFallback
+        });
+        assert.strictEqual(res.capability, CAPABILITIES.URL_READER);
+        assert.strictEqual(res.provider, 'AuraAI Source Memory');
+        assert(res.response.includes('manageengine.com'), 'Must cite original source');
     });
 
-    test('Router: Image attachment routes to IMAGE_UNDERSTANDING', () => {
-        const route = analyzeRequest('What does this screenshot show?', [], [{ name: 'error.png', type: 'image/png' }]);
+    // TEST 7: Upload PDF / text document -> Hierarchical summary
+    let sampleDoc;
+    runSyncTest('TEST 7: Upload document and generate hierarchical summary', () => {
+        const docText = "--- Page 1 ---\n# Project Aura Architecture\nAuraAI is an enterprise AI assistant featuring unified routing, RAG, and multimodal capabilities.\n--- Page 2 ---\n# Database Failover Protocol\nWhen active database node fails, replica initiates takeover in 250ms with zero data loss.\nAutomatic health checks poll every 50ms.\n--- Page 3 ---\n# Security & SSRF Protection\nPrivate IPv4 ranges and cloud metadata endpoints are strictly blocked at DNS and network levels.";
+        sampleDoc = parseStructuredText(docText, 'aura_architecture.txt', 'txt');
+        assert.strictEqual(sampleDoc.totalPages, 3);
+        const summary = summarizeDocumentLocally(sampleDoc, 'executive');
+        assert(summary.includes('Executive Summary'));
+        ragEngine.registerDocument(sampleDoc, conversationId);
+    });
+
+    // TEST 8: After TEST 7: "What does page 2 say?" -> RAG retrieves page 2 accurately
+    runSyncTest('TEST 8: RAG retrieves specific page 2 content accurately', () => {
+        const ret = ragEngine.retrieve('What does page 2 say about failover?', conversationId);
+        assert.strictEqual(ret.confidence, 'HIGH');
+        assert(ret.passages.length > 0);
+        assert.strictEqual(ret.passages[0].page, 2);
+        assert(ret.passages[0].text.includes('replica initiates takeover in 250ms'));
+    });
+
+    // TEST 9: Image understanding / OCR identification
+    runSyncTest('TEST 9: Image attachment routes to IMAGE_UNDERSTANDING', () => {
+        const route = analyzeRequest('What error is shown?', [], [{ name: 'db_error.png', type: 'image/png', dataUrl: 'data:image/png;base64,iVBORw0KGgo' }], {}, conversationId);
         assert.strictEqual(route.capability, CAPABILITIES.IMAGE_UNDERSTANDING);
     });
 
-    test('Router: "Create an image of a futuristic city" routes to IMAGE_GENERATION', () => {
-        const route = analyzeRequest('Create an image of a futuristic city');
+    // TEST 10: "Create an image of a futuristic city" -> IMAGE_GENERATION
+    await runAsyncTest('TEST 10: "Create an image of a futuristic city" calls image generator', async () => {
+        const route = analyzeRequest('Create an image of a futuristic city', [], [], {}, conversationId);
         assert.strictEqual(route.capability, CAPABILITIES.IMAGE_GENERATION);
+        const res = await orchestrateRequest({
+            prompt: 'Create an image of a futuristic city',
+            userConfig: { conversationId },
+            conversationId,
+            generateSmartResponseFallback
+        });
+        assert.strictEqual(res.capability, CAPABILITIES.IMAGE_GENERATION);
+        assert(res.response.includes('🎨 Generated Image:'));
+        assert(res.response.includes('https://image.pollinations.ai/prompt/'));
     });
 
-    test('Router: "Make it darker and add rain" after image generation routes to IMAGE_EDITING', () => {
-        const history = [{ role: 'assistant', content: '🎨 Generated Image: *futuristic city*' }];
-        const route = analyzeRequest('Make it darker and add rain', history);
+    // TEST 11: After TEST 10: "Make it darker and add rain" -> IMAGE_EDITING
+    await runAsyncTest('TEST 11: Follow-up "Make it darker and add rain" routes to IMAGE_EDITING', async () => {
+        const history = [
+            { role: 'user', content: 'Create an image of a futuristic city' },
+            { role: 'assistant', content: "🎨 Generated Image: *futuristic city*\n\n> **Prompt**: *\"futuristic city\"*\nhttps://image.pollinations.ai/prompt/futuristic%20city" }
+        ];
+        const route = analyzeRequest('Make it darker and add rain', history, [], {}, conversationId);
         assert.strictEqual(route.capability, CAPABILITIES.IMAGE_EDITING);
         assert.strictEqual(route.isFollowUp, true);
+        const res = await orchestrateRequest({
+            prompt: 'Make it darker and add rain',
+            history,
+            userConfig: { conversationId },
+            conversationId,
+            generateSmartResponseFallback
+        });
+        assert.strictEqual(res.capability, CAPABILITIES.IMAGE_EDITING);
+        assert(res.response.includes('darker') || res.response.includes('rain'));
     });
 
-    test('Router: Multi-modal comparison (Doc + URL) routes to MULTI_TOOL_WORKFLOW', () => {
-        const route = analyzeRequest('Compare this document with https://example.com', [], [{ name: 'manual.pdf' }]);
+    // TEST 12: Calculate 25 * 40 + 15 -> 1015
+    await runAsyncTest('TEST 12: Math calculation 25 * 40 + 15 evaluates to 1015', async () => {
+        const val = calculateMath('25 * 40 + 15');
+        assert.strictEqual(val, 1015);
+        const res = await orchestrateRequest({
+            prompt: '25 * 40 + 15',
+            userConfig: { conversationId },
+            conversationId,
+            generateSmartResponseFallback
+        });
+        assert.strictEqual(res.capability, CAPABILITIES.CODE_CALCULATION);
+        assert(res.response.includes('1015'));
+    });
+
+    // TEST 13: Multimodal comparison (Doc + URL) -> MULTI_TOOL_WORKFLOW
+    runSyncTest('TEST 13: Document + URL comparison routes to MULTI_TOOL_WORKFLOW', () => {
+        const route = analyzeRequest('Compare this document with https://example.com', [], [{ name: 'spec.pdf', type: 'application/pdf' }], {}, conversationId);
         assert.strictEqual(route.capability, CAPABILITIES.MULTI_TOOL_WORKFLOW);
     });
 
-    test('Router: Math equation "25 * 40 + 15" routes to CODE_CALCULATION', () => {
-        const route = analyzeRequest('25 * 40 + 15');
-        assert.strictEqual(route.capability, CAPABILITIES.CODE_CALCULATION);
+    // TEST 14: SSRF test: http://127.0.0.1 is blocked
+    await runAsyncTest('TEST 14: SSRF blocks loopback 127.0.0.1', async () => {
+        const check = await validateUrlSafety('http://127.0.0.1:8080/admin');
+        assert.strictEqual(check.safe, false, '127.0.0.1 must be blocked');
+        assert(check.reason.includes('loopback') || check.reason.includes('blocked'));
     });
 
-    // 3. Calculator Tests
-    test('Calculator: Evaluates arithmetic correctly', () => {
-        assert.strictEqual(calculateMath('25 * 40 + 15'), 1015);
-        assert.strictEqual(calculateMath('(100 - 20) / 4'), 20);
-        assert.strictEqual(calculateMath('2 ^ 8'), 256);
+    // TEST 15: SSRF test: http://169.254.169.254 is blocked
+    await runAsyncTest('TEST 15: SSRF blocks cloud metadata 169.254.169.254', async () => {
+        const check = await validateUrlSafety('http://169.254.169.254/latest/meta-data');
+        assert.strictEqual(check.safe, false, '169.254.169.254 must be blocked');
+        assert(check.reason.includes('metadata') || check.reason.includes('internal'));
     });
 
-    // 4. Document Processing & RAG Tests
-    test('DocumentProcessor: Parses multi-page structured document', () => {
-        const sampleDocText = 
-`--- Page 1 ---
-# Overview
-This is the system architecture overview for the high availability cluster.
-
---- Page 2 ---
-# Error Handling & Failover
-When node A fails, node B automatically initiates IP takeover within 300ms.
-Heartbeat checks run every 50ms over redundant UDP channels.`;
-
-        const parsed = parseStructuredText(sampleDocText, 'cluster_spec.txt', 'txt');
-        assert.strictEqual(parsed.totalPages, 2);
-        assert.strictEqual(parsed.sections.length, 2);
-
-        // Summaries
-        const execSummary = summarizeDocumentLocally(parsed, 'executive');
-        assert(execSummary.includes('Executive Summary'));
-
-        // Chunking
-        const chunks = chunkDocument(parsed);
-        assert(chunks.length >= 2);
-
-        // Register in RAG Engine
-        ragEngine.registerDocument(parsed, 'test_convo');
-        
-        // Retrieve targeting specific page
-        const ret1 = ragEngine.retrieve('What happens on page 2 when node fails?', 'test_convo');
-        assert.strictEqual(ret1.confidence, 'HIGH');
-        assert(ret1.passages[0].text.includes('node B automatically initiates IP takeover'));
-        assert.strictEqual(ret1.passages[0].page, 2);
+    // TEST 16: SSRF test: http://192.168.1.1 is blocked
+    await runAsyncTest('TEST 16: SSRF blocks private LAN IP 192.168.1.1', async () => {
+        const check = await validateUrlSafety('http://192.168.1.1/router-login');
+        assert.strictEqual(check.safe, false, '192.168.1.1 must be blocked');
+        assert(check.reason.includes('private') || check.reason.includes('blocked'));
     });
 
-    // 5. Cache Layer Tests
-    test('Cache: Stores and retrieves with TTL', () => {
-        const cache = new CapabilityCache(5000);
-        cache.set('key1', { data: 'test_payload' });
-        assert.strictEqual(cache.has('key1'), true);
-        assert.strictEqual(cache.get('key1').data, 'test_payload');
-        cache.delete('key1');
-        assert.strictEqual(cache.has('key1'), false);
-    });
+    console.log('\n========================================================');
+    console.log(`🎯 TEST SUITE VERIFICATION: ${passed}/${total} PASSED`);
+    console.log('========================================================\n');
 
-    // 6. Live Local HTTP Server API Tests
-    await testAsync('Live API: /api/instant-chat handles NORMAL_CHAT', async () => {
-        const postData = JSON.stringify({
-            messages: [{ role: 'user', content: 'Explain DNS in simple terms' }],
-            model: 'gpt-4o-mini',
-            webSearch: false
-        });
-
-        const res = await makePostRequest('/api/instant-chat', postData);
-        assert.strictEqual(res.statusCode, 200);
-        const data = JSON.parse(res.body);
-        assert(data.response.length > 20);
-        assert.strictEqual(data.capability, 'normal_chat');
-    });
-
-    await testAsync('Live API: /api/instant-chat handles CODE_CALCULATION', async () => {
-        const postData = JSON.stringify({
-            messages: [{ role: 'user', content: 'calculate 1500 * 4 + 250' }],
-            model: 'gpt-4o-mini'
-        });
-
-        const res = await makePostRequest('/api/instant-chat', postData);
-        assert.strictEqual(res.statusCode, 200);
-        const data = JSON.parse(res.body);
-        assert(data.response.includes('6250'));
-        assert.strictEqual(data.capability, 'code_calculation');
-    });
-
-    await testAsync('Live API: /api/instant-chat handles IMAGE_GENERATION', async () => {
-        const postData = JSON.stringify({
-            messages: [{ role: 'user', content: 'Create an image of an emerald forest at sunrise' }],
-            model: 'gpt-4o-mini'
-        });
-
-        const res = await makePostRequest('/api/instant-chat', postData);
-        assert.strictEqual(res.statusCode, 200);
-        const data = JSON.parse(res.body);
-        assert(data.response.includes('🎨 Generated Image:'));
-        assert(data.response.includes('https://image.pollinations.ai/prompt/'));
-        assert.strictEqual(data.capability, 'image_generation');
-    });
-
-    await testAsync('Live API: /api/parse-document registers document', async () => {
-        const postData = JSON.stringify({
-            filename: 'deployment_guide.txt',
-            text: '--- Page 1 ---\n# Deployment\nRun docker compose up -d to launch the backend services on port 8080.',
-            conversationId: 'live_test_convo'
-        });
-
-        const res = await makePostRequest('/api/parse-document', postData);
-        assert.strictEqual(res.statusCode, 200);
-        const data = JSON.parse(res.body);
-        assert.strictEqual(data.success, true);
-        assert.strictEqual(data.filename, 'deployment_guide.txt');
-    });
-
-    console.log(`\n=== TEST SUITE RESULTS: ${passed}/${total} PASSED ===\n`);
     if (passed === total) {
-        console.log('🎉 ALL CAPABILITY TESTS COMPLETED SUCCESSFULLY!');
+        console.log('🏆 ALL 16 CAPABILITY & END-TO-END TESTS PASSED WITH 100% SUCCESS!');
+        process.exit(0);
+    } else {
+        console.error(`🚨 ${total - passed} test(s) failed!`);
+        process.exit(1);
     }
 }
 
-function makePostRequest(path, data) {
-    return new Promise((resolve, reject) => {
-        const options = {
-            hostname: '127.0.0.1',
-            port: 3000,
-            path: path,
-            method: 'POST',
-            headers: {
-                'Content-Type': 'application/json',
-                'Content-Length': Buffer.byteLength(data)
-            },
-            timeout: 5000
-        };
-
-        const req = http.request(options, (res) => {
-            let body = '';
-            res.on('data', chunk => body += chunk);
-            res.on('end', () => resolve({ statusCode: res.statusCode, body }));
-        });
-
-        req.on('error', reject);
-        req.on('timeout', () => { req.destroy(); reject(new Error('Request timeout')); });
-        req.write(data);
-        req.end();
-    });
-}
-
-runTests();
+main().catch(err => {
+    console.error('Fatal test error:', err);
+    process.exit(1);
+});

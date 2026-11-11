@@ -1,6 +1,6 @@
 /**
  * AuraAI RAG (Retrieval-Augmented Generation) & Conversation Source Registry
- * Handles chunk indexing, semantic retrieval, page-level query routing, and multi-turn document memory.
+ * Handles chunk indexing, semantic retrieval, page-level query routing, and multi-turn document & web memory.
  */
 
 const { log } = require('./logger');
@@ -8,7 +8,7 @@ const { chunkDocument } = require('./documentProcessor');
 
 class RAGEngine {
     constructor() {
-        // conversationId -> { documents: Map(docId -> doc), chunks: Array }
+        // conversationId -> { documents: Map(docId -> doc), sources: Map(url -> source), chunks: Array }
         this.registries = new Map();
     }
 
@@ -16,6 +16,7 @@ class RAGEngine {
         if (!this.registries.has(conversationId)) {
             this.registries.set(conversationId, {
                 documents: new Map(),
+                sources: new Map(),
                 chunks: []
             });
         }
@@ -38,9 +39,68 @@ class RAGEngine {
         return doc;
     }
 
+    registerWebSource(sourceData, conversationId = 'default') {
+        const reg = this.getRegistry(conversationId);
+        const sourceId = 'src_' + Date.now() + '_' + Math.random().toString(36).substring(2, 7);
+        
+        const sourceEntry = {
+            sourceId,
+            url: sourceData.url,
+            title: sourceData.title || sourceData.domain || 'Retrieved Webpage',
+            domain: sourceData.domain || 'Web',
+            content: sourceData.content || '',
+            passages: sourceData.passages || [],
+            quality: sourceData.quality || 'HIGH',
+            retrievalTime: Date.now()
+        };
+
+        reg.sources.set(sourceData.url, sourceEntry);
+
+        // Chunk and index web passages for cross-turn conversational follow-up
+        if (sourceData.passages && sourceData.passages.length > 0) {
+            sourceData.passages.forEach((p, idx) => {
+                reg.chunks.push({
+                    id: `${sourceId}_chunk_${idx}`,
+                    docId: sourceId,
+                    filename: sourceEntry.title,
+                    url: sourceEntry.url,
+                    domain: sourceEntry.domain,
+                    isWebSource: true,
+                    page: 1,
+                    title: sourceEntry.title,
+                    text: p,
+                    tokenCount: Math.ceil(p.length / 4)
+                });
+            });
+        }
+
+        log('SOURCE STORED', `Registered web source "${sourceEntry.title}" in conversation "${conversationId}"`, {
+            url: sourceEntry.url,
+            passagesCount: sourceEntry.passages.length,
+            totalChunks: reg.chunks.length
+        });
+
+        return sourceEntry;
+    }
+
+    getActiveSources(conversationId = 'default') {
+        const reg = this.getRegistry(conversationId);
+        return Array.from(reg.sources.values());
+    }
+
+    hasActiveSources(conversationId = 'default') {
+        const reg = this.getRegistry(conversationId);
+        return reg.sources.size > 0;
+    }
+
     getDocuments(conversationId = 'default') {
         const reg = this.getRegistry(conversationId);
         return Array.from(reg.documents.values());
+    }
+
+    hasActiveDocuments(conversationId = 'default') {
+        const reg = this.getRegistry(conversationId);
+        return reg.documents.size > 0;
     }
 
     // Tokenize text for BM25 and term matching
@@ -52,11 +112,11 @@ class RAGEngine {
             .filter(t => t.length > 1);
     }
 
-    // Retrieve relevant passages
-    retrieve(query, conversationId = 'default', topK = 4) {
+    // Retrieve relevant passages across both documents and registered web sources
+    retrieve(query, conversationId = 'default', topK = 5) {
         const reg = this.getRegistry(conversationId);
         if (reg.chunks.length === 0) {
-            return { passages: [], confidence: 'LOW', totalDocs: 0 };
+            return { passages: [], confidence: 'LOW', totalDocs: 0, totalSources: 0 };
         }
 
         const qTokens = this.tokenize(query);
@@ -84,17 +144,24 @@ class RAGEngine {
             // Keyword matching & Term frequency
             qTokens.forEach(token => {
                 if (cLower.includes(token)) {
-                    score += 5;
-                    // Exact word match bonus
+                    score += 6;
+                    // Exact word boundary match bonus
                     const regex = new RegExp(`\\b${token}\\b`, 'i');
                     if (regex.test(chunk.text)) {
-                        score += 3;
+                        score += 4;
                     }
                 }
                 if (chunk.title && chunk.title.toLowerCase().includes(token)) {
                     score += 8;
                 }
             });
+
+            // Boost action / step words for procedural queries
+            if (qLower.includes('step') || qLower.includes('how') || qLower.includes('instruction')) {
+                if (cLower.includes('step') || cLower.includes('1.') || cLower.includes('2.') || cLower.includes('follow') || cLower.includes('change') || cLower.includes('configure')) {
+                    score += 10;
+                }
+            }
 
             // Length normalization
             const normScore = score / (1 + Math.log(chunk.text.length / 200 + 1));
@@ -109,7 +176,7 @@ class RAGEngine {
             const bestScore = topChunks[0].score;
             if (bestScore > 15 || (targetPage && topChunks[0].page === targetPage)) {
                 confidence = 'HIGH';
-            } else if (bestScore > 5) {
+            } else if (bestScore > 4) {
                 confidence = 'MEDIUM';
             }
         }
@@ -119,13 +186,17 @@ class RAGEngine {
         return {
             passages: topChunks,
             confidence,
-            totalDocs: reg.documents.size
+            totalDocs: reg.documents.size,
+            totalSources: reg.sources.size
         };
     }
 
     formatContextString(retrievalResult) {
         if (!retrievalResult.passages || retrievalResult.passages.length === 0) return '';
         return retrievalResult.passages.map((p, idx) => {
+            if (p.isWebSource) {
+                return `[Source ${idx + 1} | Webpage: ${p.filename} | ${p.url}]:\n${p.text}`;
+            }
             return `[Passage ${idx + 1} | Doc: ${p.filename}, Page ${p.page} | ${p.title}]:\n${p.text}`;
         }).join('\n\n');
     }

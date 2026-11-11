@@ -822,31 +822,22 @@ async function sendMessage() {
             let liveWebSources = [];
             let liveWebContext = '';
 
-            // DIRECT URL MODE OR LIVE WEB RETRIEVAL
+            // Determine intent for clean UX status indicator
             const hasDirectUrl = /https?:\/\/[^\s]+/i.test(text);
-            if ((state.webSearch || hasDirectUrl) && text.trim().length > 3) {
-                try {
-                    const searchRes = await fetch(`/api/search?q=${encodeURIComponent(text.trim())}`);
-                    if (searchRes.ok) {
-                        const searchData = await searchRes.json();
-                        liveWebSources = searchData.sources || [];
-                        liveWebContext = searchData.webContext || '';
-                    }
-                } catch (e) {
-                    console.warn('[AuraAI] Live web search query error:', e);
-                }
-            }
-
-            // Update transparent processing status
             const hasAttachments = currentAttachments && currentAttachments.length > 0;
             const isDoc = hasAttachments && currentAttachments.some(a => a.type?.includes('pdf') || a.name?.match(/\.(pdf|docx|xlsx|txt|csv|pptx)$/i));
             const isImg = hasAttachments && currentAttachments.some(a => a.type?.startsWith('image/') || a.dataUrl);
+            const isGreeting = /^(?:hi|hello|hey|good morning|thanks|thank you|tell me a joke)[!.,? ]*$/i.test(text.trim());
+            const isImgGen = /^(?:generate|create|make|draw|paint|sketch)\s+(?:an?\s+)?(?:image|picture|photo|drawing|illustration)/i.test(text.trim());
 
             let statusMsg = 'Thinking...';
             if (hasDirectUrl) statusMsg = 'Reading webpage content...';
             else if (isDoc) statusMsg = 'Processing document & indexing passages...';
             else if (isImg) statusMsg = 'Analyzing visual content...';
-            else if (state.webSearch) statusMsg = 'Searching live web & verifying sources...';
+            else if (isImgGen) statusMsg = 'Synthesizing visual art...';
+            else if (state.webSearch && !isGreeting && (pLower.includes('news') || pLower.includes('latest') || pLower.includes('version') || text.includes('?'))) {
+                statusMsg = 'Retrieving live web sources...';
+            }
             updateMessageContent(assistantBubble, `*${statusMsg}*`, true);
 
             // Direct AI Chat to /api/instant-chat via Central Orchestrator
@@ -886,8 +877,9 @@ async function sendMessage() {
             }
         } else if (state.engine === 'webllm') {
             const hasDirectUrl = /https?:\/\/[^\s]+/i.test(text);
+            const isGreeting = /^(?:hi|hello|hey|good morning|thanks|thank you|tell me a joke)[!.,? ]*$/i.test(text.trim());
             let liveWebContext = '';
-            if ((state.webSearch || hasDirectUrl) && text.trim().length > 3) {
+            if ((state.webSearch || hasDirectUrl) && !isGreeting && text.trim().length > 3) {
                 try {
                     const searchRes = await fetch(`/api/search?q=${encodeURIComponent(text.trim())}`);
                     if (searchRes.ok) {
@@ -920,8 +912,9 @@ async function sendMessage() {
             }
         } else if (state.engine === 'ollama') {
             const hasDirectUrl = /https?:\/\/[^\s]+/i.test(text);
+            const isGreeting = /^(?:hi|hello|hey|good morning|thanks|thank you|tell me a joke)[!.,? ]*$/i.test(text.trim());
             let liveWebContext = '';
-            if ((state.webSearch || hasDirectUrl) && text.trim().length > 3) {
+            if ((state.webSearch || hasDirectUrl) && !isGreeting && text.trim().length > 3) {
                 try {
                     const searchRes = await fetch(`/api/search?q=${encodeURIComponent(text.trim())}`);
                     if (searchRes.ok) {

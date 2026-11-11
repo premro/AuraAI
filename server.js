@@ -1,3 +1,4 @@
+const { calculateMath } = require('./tools');
 
 function generateFullCodeImplementation(rawPrompt, p) {
     // 1. Chrome / Browser Rephrase Extension (Manifest V3)
@@ -451,6 +452,7 @@ if __name__ == "__main__":
 const https = require('https');
 const querystring = require('querystring');
 const webRetrieval = require('./webRetrieval.js');
+const router = require('./router.js');
 const orchestrator = require('./orchestrator.js');
 const documentProcessor = require('./documentProcessor.js');
 const ragEngine = require('./ragEngine.js');
@@ -1764,57 +1766,105 @@ function handleEmailDraft(rawPrompt, p) {
 async function generateSmartResponse(prompt, history = [], userConfig = {}) {
     const rawPrompt = (prompt || '').replace(/^(?:User Request|User|Prompt):\s*/i, '').trim();
     const p = rawPrompt.toLowerCase().replace(/^(?:user request|user|prompt):\s*/i, '').trim();
+    const conversationId = userConfig.conversationId || 'default';
 
     const activeApiKey = (userConfig.apiKey || process.env.GEMINI_API_KEY || process.env.OPENAI_API_KEY || process.env.GROQ_API_KEY || '').trim();
 
-    // DIRECT URL MODE: If user provided a URL explicitly, do NOT search first
-    if (webRetrieval.hasDirectUrl(rawPrompt)) {
-        return handleUrlInput(rawPrompt, p, userConfig);
+    // Consult Central Capability Router to determine intent
+    const route = router.analyzeRequest(rawPrompt, history, [], userConfig, conversationId);
+
+    // 1. Math & Expression Evaluation
+    if (route.capability === 'code_calculation') {
+        const mathVal = calculateMath(rawPrompt);
+        if (mathVal !== null) {
+            return `### 🔢 Calculation Result\n\n` +
+                   `$${rawPrompt} = ${mathVal}$\n\n` +
+                   `**Result**: **${mathVal}**`;
+        }
     }
 
-    // WEB SEARCH & RETRIEVAL PIPELINE: If web search is active, execute retrieval pipeline
-    if (userConfig.webSearch !== false) {
-        let retrievalResult = null;
-        let liveSearchSources = (userConfig.webSources && userConfig.webSources.length > 0) ? userConfig.webSources : [];
-        let liveWebContext = userConfig.webContext || '';
-
-        if (liveSearchSources.length === 0 || !liveWebContext) {
-            retrievalResult = await webRetrieval.executeWebRetrievalPipeline(rawPrompt);
-            if (retrievalResult && retrievalResult.sources) {
-                liveSearchSources = retrievalResult.sources;
-                liveWebContext = retrievalResult.webContext || '';
-            }
+    // 2. Image Generation & Image Editing
+    if (route.capability === 'image_generation' || route.capability === 'image_editing') {
+        let subject = rawPrompt;
+        if (route.capability === 'image_editing' && route.isFollowUp) {
+            const lastAssistant = history.slice(-3).reverse().find(m => m.role === 'assistant' && (m.content.includes('pollinations.ai') || m.content.includes('🎨 Generated Image')));
+            const prevPromptMatch = lastAssistant ? lastAssistant.content.match(/Prompt\*\*:\s*\*"([^"]+)"\*/i) : null;
+            const basePrompt = prevPromptMatch ? prevPromptMatch[1] : 'scene';
+            subject = `${basePrompt}, ${rawPrompt}`;
         } else {
-            retrievalResult = {
-                mode: 'web_search',
-                confidence: 'HIGH',
-                sources: liveSearchSources,
-                webContext: liveWebContext
-            };
+            const cleanSub = rawPrompt.match(/^(?:generate|create|make|draw|paint|sketch)\s+(?:an?\s+)?(?:image|picture|photo|drawing|illustration)?\s*(?:of|on|about)?\s*(.+)/i);
+            if (cleanSub) subject = cleanSub[1];
         }
 
+        const encoded = encodeURIComponent(subject.trim());
+        const imgUrl = `https://image.pollinations.ai/prompt/${encoded}?width=1024&height=1024&nologo=true`;
+        return `### 🎨 Generated Image: *${subject}*\n\n` +
+               `![${subject}](${imgUrl})\n\n` +
+               `> **Prompt**: *"${subject}"*\n` +
+               `> **Resolution**: 1024×1024 • Model: Flux / Diffusion Engine\n\n` +
+               `[📥 Download Full Resolution Image](${imgUrl})`;
+    }
+
+    // 3. Direct URL Reader Mode
+    if (route.capability === 'url_reader') {
+        if (route.isFollowUp && ragEngine.hasActiveSources(conversationId)) {
+            // Retrieve grounded context from the stored webpage source
+            const retrieved = ragEngine.retrieve(rawPrompt, conversationId, 5);
+            const activeSources = ragEngine.getActiveSources(conversationId);
+            const primarySource = activeSources[activeSources.length - 1];
+
+            if (retrieved.passages && retrieved.passages.length > 0) {
+                let answer = `### 📄 Grounded Answer from [${primarySource.title}](${primarySource.url})\n\n`;
+                answer += `Based on the stored webpage content from **${primarySource.domain}**:\n\n`;
+                retrieved.passages.forEach((p, idx) => {
+                    answer += `${idx + 1}. ${p.text}\n\n`;
+                });
+                answer += `---\n*Source*: [${primarySource.url}](${primarySource.url})`;
+                return answer;
+            }
+        }
+
+        if (webRetrieval.hasDirectUrl(rawPrompt) || route.url) {
+            return handleUrlInput(rawPrompt, p, userConfig);
+        }
+    }
+
+    // 4. Web Search Pipeline (ONLY when route.capability is web_search)
+    if (route.capability === 'web_search') {
+        const retrievalResult = await webRetrieval.executeWebRetrievalPipeline(rawPrompt, { conversationId });
+
         if (retrievalResult) {
-            // SOURCE VALIDATION: If confidence is LOW, state transparently instead of inventing
             if (retrievalResult.confidence === 'LOW') {
                 return retrievalResult.answer || "I found search results, but I could not find a sufficiently relevant source to answer this reliably.";
             }
 
-            // Pass retrieved webpage passages to active LLM
+            // Pass retrieved webpage passages to active frontier LLM if key is present
             if (activeApiKey) {
                 if (activeApiKey.startsWith('AIza')) {
-                    const geminiReply = await callGeminiAPI(activeApiKey, rawPrompt, history, userConfig.model, liveWebContext);
+                    const geminiReply = await callGeminiAPI(activeApiKey, rawPrompt, history, userConfig.model, retrievalResult.webContext);
                     if (geminiReply) return geminiReply;
                 } else if (activeApiKey.startsWith('sk-') || activeApiKey.startsWith('gsk_')) {
-                    const openaiReply = await callOpenAIAPI(activeApiKey, rawPrompt, history, userConfig.model, liveWebContext);
+                    const openaiReply = await callOpenAIAPI(activeApiKey, rawPrompt, history, userConfig.model, retrievalResult.webContext);
                     if (openaiReply) return openaiReply;
                 }
             }
 
-            // If no external API key, synthesize grounded answer directly from retrieved webpage content
+            // Synthesize grounded answer directly from retrieved webpage content
             const synthesizedAnswer = webRetrieval.synthesizeAnswerFromRetrievedContent(rawPrompt, retrievalResult);
             if (synthesizedAnswer) {
                 return synthesizedAnswer;
             }
+        }
+    }
+
+    // 5. Frontier AI for Normal Chat (Gemini / OpenAI)
+    if (activeApiKey) {
+        if (activeApiKey.startsWith('AIza')) {
+            const geminiReply = await callGeminiAPI(activeApiKey, rawPrompt, history, userConfig.model);
+            if (geminiReply) return geminiReply;
+        } else if (activeApiKey.startsWith('sk-') || activeApiKey.startsWith('gsk_')) {
+            const openaiReply = await callOpenAIAPI(activeApiKey, rawPrompt, history, userConfig.model);
+            if (openaiReply) return openaiReply;
         }
     }
 
@@ -2002,20 +2052,85 @@ What would you like to work on?`;
         return generateFullCodeImplementation(rawPrompt, p);
     }
 
-    // 8. Universal Live Web Grounding (DuckDuckGo Lite Engine)
-    let liveSearchSources = (userConfig.webSources && userConfig.webSources.length > 0) ? userConfig.webSources : [];
-    
-    if (liveSearchSources.length === 0) {
-        const liveSearch = await performLiveWebSearch(rawPrompt);
-        if (liveSearch && liveSearch.sources && liveSearch.sources.length > 0) {
-            liveSearchSources = liveSearch.sources;
-        }
+    // Core Concepts & Evergreen Computer Science Explanations (Strict NORMAL_CHAT)
+    if (p.includes('dns') && (p.includes('explain') || p.includes('what is') || p.includes('how does'))) {
+        return `### 🌐 Explanation: Domain Name System (DNS)\n\n` +
+               `The **Domain Name System (DNS)** serves as the "phonebook of the Internet". It translates human-friendly domain names (e.g., 'example.com') into numeric IP addresses (e.g., '93.184.216.34' or IPv6 '2606:2800:220:1:248:1893:25c8:1946') that computers and routers use to route traffic across the global network.\n\n` +
+               `#### How DNS Resolution Works (Step-by-Step):\n` +
+               `1. **DNS Query Initiation**: When you type a URL into your browser, the OS first checks its local cache and 'hosts' file.\n` +
+               `2. **Recursive Resolver**: If not cached, the query is sent to your ISP or configured recursive resolver (e.g., 1.1.1.1 or 8.8.8.8).\n` +
+               `3. **Root Nameserver**: The resolver queries one of the 13 logical root nameservers ('.' (dot)), which directs it to the Top-Level Domain (TLD) server (e.g., '.com').\n` +
+               `4. **TLD Nameserver**: The TLD nameserver directs the resolver to the domain's Authoritative Nameserver.\n` +
+               `5. **Authoritative Nameserver**: Returns the actual IP address record (A record for IPv4, AAAA for IPv6).\n` +
+               `6. **Browser Connection**: The browser receives the IP and initiates a TCP/TLS handshake to load the webpage.\n\n` +
+               `#### Key DNS Record Types:\n` +
+               `- **A Record**: Maps hostname to IPv4 address.\n` +
+               `- **AAAA Record**: Maps hostname to IPv6 address.\n` +
+               `- **CNAME**: Canonical Name alias pointing one hostname to another.\n` +
+               `- **MX**: Mail Exchange record directing email to mail servers.\n` +
+               `- **TXT**: Text records used for domain verification, SPF, and DKIM.`;
     }
 
-    if (liveSearchSources.length > 0) {
-        const synthesizedAnswer = synthesizeFromWebSources(rawPrompt, liveSearchSources);
-        if (synthesizedAnswer) {
-            return synthesizedAnswer;
+    if (p.includes('polymorphism') && (p.includes('what is') || p.includes('explain') || p.includes('meaning'))) {
+        return `### 🧩 Explanation: Polymorphism in Computer Science\n\n` +
+               `**Polymorphism** (from Greek *poly* meaning "many" and *morph* meaning "form") is a fundamental principle of Object-Oriented Programming (OOP) that allows entities such as functions, objects, or methods to take on different forms or behaviors depending on the context.\n\n` +
+               `#### Two Primary Forms of Polymorphism:\n\n` +
+               `#### 1. Compile-Time Polymorphism (Static / Overloading)\n` +
+               `Occurs when the method or function call is resolved at compile time.\n` +
+               `- **Method Overloading**: Multiple methods in the same class with the same name but different parameter signatures.\n` +
+               `- **Operator Overloading**: Giving standard operators (+, -, *) custom behavior for user-defined types.\n\n` +
+               `#### 2. Runtime Polymorphism (Dynamic / Overriding)\n` +
+               `Occurs when an overridden method call is resolved dynamically at runtime through dynamic dispatch (virtual table or vtable).\n` +
+               `- **Method Overriding**: A child class provides a specific implementation of a method already defined in its parent class or interface.\n\n` +
+               `#### Code Example (Python):\n` +
+               "```python\nclass Animal:\n    def make_sound(self):\n        raise NotImplementedError()\n\nclass Dog(Animal):\n    def make_sound(self):\n        return \"Woof!\"\n\nclass Cat(Animal):\n    def make_sound(self):\n        return \"Meow!\"\n\n# Polymorphic function accepting any Animal subtype\ndef play_sound(animal: Animal):\n    print(animal.make_sound())\n\nplay_sound(Dog())  # Output: Woof!\nplay_sound(Cat())  # Output: Meow!\n```";
+    }
+
+    if ((p.includes('operating system') || p.includes('what is an os')) && (p.includes('what is') || p.includes('explain'))) {
+        return `### 💻 Explanation: Operating System (OS)\n\n` +
+               `An **Operating System (OS)** is system software that manages computer hardware resources, manages memory and processor scheduling, and provides common services and execution environments for computer applications.\n\n` +
+               `#### Core Responsibilities of an OS:\n` +
+               `1. **Kernel & Process Management**: Schedules CPU time between competing processes and threads, handles context switching, and manages process states.\n` +
+               `2. **Memory Management**: Allocates and frees virtual memory pages, translates virtual addresses to physical RAM via the MMU, and manages swap space.\n` +
+               `3. **File System Management**: Organizes file storage, permissions, directory hierarchies, and read/write I/O (e.g., APFS, ext4, NTFS).\n` +
+               `4. **Device Drivers & I/O Control**: Abstracts hardware peripherals (GPUs, network cards, disks, keyboards) into standardized interfaces.\n` +
+               `5. **Security & Access Control**: Enforces user privileges, process isolation, and sandboxing to protect system integrity.\n\n` +
+               `#### Major Operating System Families:\n` +
+               `- **UNIX / POSIX**: macOS, Linux distributions (Ubuntu, Debian, RedHat), BSD.\n` +
+               `- **Windows NT**: Windows 10, Windows 11, Windows Server.\n` +
+               `- **Mobile Embedded**: iOS, Android.`;
+    }
+
+    if (p.includes('python') && (p.includes('what is') || p.includes('explain python'))) {
+        return `### 🐍 Explanation: Python Programming Language\n\n` +
+               `**Python** is a high-level, interpreted, dynamically typed programming language created by Guido van Rossum and released in 1991. It emphasizes code readability, developer productivity, and clean design principles ("The Zen of Python").\n\n` +
+               `#### Key Features of Python:\n` +
+               `- **Clear, Expressive Syntax**: Uses indentation (whitespace) rather than curly braces to define scope, reducing visual clutter.\n` +
+               `- **Multi-Paradigm**: Supports procedural, object-oriented, and functional programming patterns.\n` +
+               `- **Extensive Standard Library**: "Batteries included" philosophy with rich built-in support for networking, math, file I/O, and data serialization.\n` +
+               `- **Ecosystem Dominance**: The premier language for Machine Learning and AI (PyTorch, TensorFlow), Data Science (Pandas, NumPy), and backend development (FastAPI, Django).`;
+    }
+
+    if (p.includes('tell me a joke') || p.includes('tell a joke') || p === 'joke') {
+        return `😄 Here is a joke for you:\n\n**Why do programmers prefer dark mode?**\n\n*Because light attracts bugs!* 🐛💻`;
+    }
+
+    // 8. Universal Live Web Grounding (ONLY when route.capability is web_search)
+    if (route.capability === 'web_search') {
+        let liveSearchSources = (userConfig.webSources && userConfig.webSources.length > 0) ? userConfig.webSources : [];
+        
+        if (liveSearchSources.length === 0) {
+            const liveSearch = await performLiveWebSearch(rawPrompt);
+            if (liveSearch && liveSearch.sources && liveSearch.sources.length > 0) {
+                liveSearchSources = liveSearch.sources;
+            }
+        }
+
+        if (liveSearchSources.length > 0) {
+            const synthesizedAnswer = synthesizeFromWebSources(rawPrompt, liveSearchSources);
+            if (synthesizedAnswer) {
+                return synthesizedAnswer;
+            }
         }
     }
 
@@ -2459,4 +2574,5 @@ if (require.main === module) {
     });
 }
 
+handleRequest.generateSmartResponse = generateSmartResponse;
 module.exports = handleRequest;

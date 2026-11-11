@@ -48,13 +48,13 @@ async function validateUrlSafety(urlStr) {
         parsed = new URL(urlStr);
     } catch (e) {
         log('SECURITY CHECK', `Invalid URL format: ${urlStr}`);
-        return { isSafe: false, reason: 'Invalid URL format' };
+        return { isSafe: false, safe: false, reason: 'Invalid URL format' };
     }
 
     // Only allow HTTP and HTTPS
     if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') {
         log('SECURITY CHECK', `Blocked disallowed protocol: ${parsed.protocol}`);
-        return { isSafe: false, reason: `Disallowed protocol: ${parsed.protocol}` };
+        return { isSafe: false, safe: false, reason: `Disallowed protocol: ${parsed.protocol}` };
     }
 
     const hostname = parsed.hostname.toLowerCase();
@@ -62,18 +62,18 @@ async function validateUrlSafety(urlStr) {
     // Check direct hostnames
     if (hostname === 'localhost' || hostname === '127.0.0.1' || hostname === '0.0.0.0' || hostname === '::1') {
         log('SECURITY CHECK', `Blocked loopback address: ${hostname}`);
-        return { isSafe: false, reason: 'Access to localhost/loopback is blocked' };
+        return { isSafe: false, safe: false, reason: 'Access to localhost/loopback is blocked' };
     }
 
     if (hostname === '169.254.169.254' || hostname === 'metadata.google.internal' || hostname.endsWith('.internal') || hostname.endsWith('.local')) {
         log('SECURITY CHECK', `Blocked metadata/internal domain: ${hostname}`);
-        return { isSafe: false, reason: 'Access to cloud metadata or internal network is blocked' };
+        return { isSafe: false, safe: false, reason: 'Access to cloud metadata or internal network is blocked' };
     }
 
     // Direct IP check
     if (isPrivateIp(hostname)) {
         log('SECURITY CHECK', `Blocked private IP access: ${hostname}`);
-        return { isSafe: false, reason: 'Access to private network IPs is blocked' };
+        return { isSafe: false, safe: false, reason: 'Access to private network IPs is blocked' };
     }
 
     // Resolve DNS to verify the domain does not resolve to a private IP (DNS rebinding protection)
@@ -82,7 +82,7 @@ async function validateUrlSafety(urlStr) {
         for (const addr of addresses) {
             if (isPrivateIp(addr.address)) {
                 log('SECURITY CHECK', `DNS resolved ${hostname} to private IP ${addr.address}`);
-                return { isSafe: false, reason: `Domain resolves to private/internal network IP (${addr.address})` };
+                return { isSafe: false, safe: false, reason: `Domain resolves to private/internal network IP (${addr.address})` };
             }
         }
     } catch (dnsErr) {
@@ -90,7 +90,7 @@ async function validateUrlSafety(urlStr) {
         log('SECURITY CHECK', `DNS lookup warning for ${hostname}: ${dnsErr.message}`);
     }
 
-    return { isSafe: true, url: parsed.toString() };
+    return { isSafe: true, safe: true, url: parsed.toString() };
 }
 
 function sanitizeUntrustedText(text) {
