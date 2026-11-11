@@ -142,19 +142,38 @@ const HTML_CALCULATOR_CODE = `### Features:
     }
 
     function compute() {
-      let fullExpr = (previousExpression + currentInput).replace(/÷/g, '/').replace(/×/g, '*').replace(/\^/g, '**');
+      let fullExpr = (previousExpression + currentInput).trim();
+      fullExpr = fullExpr.replace(/÷/g, "/").replace(/×/g, "*").replace(/\^/g, "**");
+      fullExpr = fullExpr.replace(/[-+*/]+$/, "");
       try {
-        if (!/^[0-9+\\-*\\/().\\s]+$/.test(fullExpr)) {
-          throw new Error('Invalid input');
+        if (!fullExpr) return;
+        if (!/^[-+*/0-9().\s]+$/.test(fullExpr)) {
+          throw new Error("Invalid input");
         }
         let result = Function('"use strict";return (' + fullExpr + ')')();
-        previousExpression = '';
+        if (result === undefined || isNaN(result) || !isFinite(result)) {
+          throw new Error("Math error");
+        }
+        previousExpression = "";
         currentInput = String(result);
       } catch (e) {
-        currentInput = 'Error';
+        currentInput = "Error";
       }
       updateDisplay();
     }
+
+    // Full keyboard support for desktop web users
+    window.addEventListener("keydown", (e) => {
+      if (e.key >= "0" && e.key <= "9") appendNum(e.key);
+      else if (e.key === ".") appendNum(".");
+      else if (e.key === "+") appendOp("+");
+      else if (e.key === "-") appendOp("-");
+      else if (e.key === "*" || e.key === "x") appendOp("*");
+      else if (e.key === "/") appendOp("/");
+      else if (e.key === "Enter" || e.key === "=") { e.preventDefault(); compute(); }
+      else if (e.key === "Backspace") deleteChar();
+      else if (e.key === "Escape") clearAll();
+    });
   </script>
 </body>
 </html>

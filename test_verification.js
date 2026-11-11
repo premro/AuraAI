@@ -103,5 +103,36 @@ const base = { callGeminiAPI: gem, userConfig: { apiKey: 'AIzaTEST' } };
   });
   assert(r.response && (r.response.includes("photosynthesis") || r.response.includes("Photosynthesis")) && !r.response.includes("could not reach an AI model"), "N: general question works");
 
-  console.log("ALL TESTS PASSED (A through N)");
+  // O: Follow-up error query ("when enter = gives error") resolves bug and returns corrected code
+  const { HTML_CALCULATOR_CODE } = require("./calculatorHelper");
+  r = await orchestrateRequest({
+    prompt: "when enter = gives error",
+    history: [
+      { role: "user", content: "html code for advance calculatot" },
+      { role: "assistant", content: HTML_CALCULATOR_CODE }
+    ],
+    userConfig: { apiKey: "" },
+    generateSmartResponseFallback: server.generateSmartResponse
+  });
+  assert(r.response && r.response.includes("Root Cause") && r.response.includes("<!DOCTYPE html>") && !r.response.includes("I received your query regarding"), "O: follow-up error resolution");
+
+  // P: Screenshot with OCR error text resolves bug and returns corrected code
+  r = await orchestrateRequest({
+    prompt: "fix this error",
+    history: [
+      { role: "user", content: "html code for advance calculatot" },
+      { role: "assistant", content: HTML_CALCULATOR_CODE }
+    ],
+    attachments: [
+      {
+        name: "screenshot.png",
+        content: "let result = Function(fullExpr); catch(e) { currentInput = 'Error; }"
+      }
+    ],
+    userConfig: { apiKey: "" },
+    generateSmartResponseFallback: server.generateSmartResponse
+  });
+  assert(r.response && r.response.includes("Root Cause") && r.response.includes("<!DOCTYPE html>") && !r.response.includes("I received your query regarding"), "P: screenshot error resolution");
+
+  console.log("ALL TESTS PASSED (A through P)");
 })().catch(e => { console.error('FAIL', e.message); process.exit(1); });

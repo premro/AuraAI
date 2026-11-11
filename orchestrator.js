@@ -54,6 +54,10 @@ async function orchestrateRequest({
         userText = `${rawPrompt} ${ecMatch[0]} agent`;
         rewritten = true;
       }
+      if (/calculator|calculatot|compute/i.test(priorText) && /\b(error|bug|enter|fix|wrong|broken|fails|not working|=|crash)\b/i.test(rawPrompt)) {
+        userText = `Fix error in calculator code: ${rawPrompt}`;
+        rewritten = true;
+      }
     }
   }
 

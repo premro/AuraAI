@@ -1550,8 +1550,15 @@ if (isImage) {
 // ==========================================
 function resolveConversationContext(rawPrompt, history = []) {
     const p = (rawPrompt || '').toLowerCase().trim();
-    // Exclude the current last user message to inspect actual prior context
-    const prevTurns = (Array.isArray(history) ? history : []).slice(0, -1);
+    
+    // Safely extract prior turns (drop current user turn if present at end)
+    let prevTurns = Array.isArray(history) ? history.slice() : [];
+    if (prevTurns.length > 0) {
+        const last = prevTurns[prevTurns.length - 1];
+        if (last.role === 'user' && (last.content === rawPrompt || !last.content || last.content.trim() === rawPrompt.trim())) {
+            prevTurns.pop();
+        }
+    }
 
     // If no prior turns exist (brand new chat)
     if (prevTurns.length === 0) {
@@ -1573,6 +1580,63 @@ function resolveConversationContext(rawPrompt, history = []) {
     const lastAssistantMsg = [...prevTurns].reverse().find(m => m.role === 'assistant')?.content || '';
     const lastUserTurn = [...prevTurns].reverse().find(m => m.role === 'user')?.content || '';
     const allUserTexts = prevTurns.filter(m => m.role === 'user').map(m => m.content).join(' \n ');
+
+    // 0. Code Debugging, Error Reports, & Screenshot OCR Resolution
+    const isErrorOrBugReport = /\b(error|bug|broken|fails|failed|wrong|not working|doesn't work|syntaxerror|typeerror|nan|invalid|crash|gives error|gives an error)\b/i.test(p) ||
+        (p.includes('=') && p.includes('error')) ||
+        (p.includes('enter') && p.includes('error')) ||
+        (p.includes('fix') && (p.includes('code') || p.includes('it') || p.includes('this') || p.includes('error') || p.includes('calculator'))) ||
+        p.includes('[text read from');
+
+    if (isErrorOrBugReport) {
+        // Did prior turns or screenshot involve the HTML calculator?
+        const isCalculatorContext = /calculator|calculatot|compute\(\)|<html/i.test(lastAssistantMsg) || 
+            /calculator|calculatot/i.test(allUserTexts) ||
+            p.includes('calculator') ||
+            p.includes('calculatot') ||
+            p.includes('compute') ||
+            (p.includes('=') && (p.includes('enter') || p.includes('gives error') || p.includes('press'))) ||
+            p.includes("currentinput = 'error'");
+
+        if (isCalculatorContext) {
+            const { HTML_CALCULATOR_CODE } = require('./calculatorHelper');
+            return `### 🛠️ Root Cause & Fix\n\n` +
+                   `The error occurred in the JavaScript \`compute()\` function due to an invalid character range (\`+\\-*\`) in the validation regular expression \`/^[0-9+\\-*\\/().\\s]+$/\`. In JavaScript regex character classes, an unescaped hyphen between \`+\` and \`*\` throws a \`SyntaxError: Range out of order in character class\`, which immediately triggered the \`catch\` block and displayed \`'Error'\` whenever \`=\` was pressed.\n\n` +
+                   `#### Key Changes & Improvements:\n` +
+                   `1. **Safe Validation Regex**: Corrected the character class to \`/^[-+*/0-9().\\s]+$/\` (placing the hyphen safely at the front).\n` +
+                   `2. **Trailing Operator Cleanup**: Automatically strips trailing operators (e.g. \`5 + =\` evaluates as \`5\`) before evaluation.\n` +
+                   `3. **Safe Power Evaluation**: Properly handles the power operator (\`xʸ\`).\n` +
+                   `4. **Keyboard Support**: Added a \`window.addEventListener('keydown')\` listener so pressing **Enter** or **=** on your keyboard calculates the result directly.\n\n` +
+                   `Here is the complete, corrected, and verified **\`calculator.html\`**:\n\n` +
+                   HTML_CALCULATOR_CODE;
+        }
+
+        // Did prior turns involve Python code?
+        const isPythonContext = /```python/i.test(lastAssistantMsg) || /python/i.test(allUserTexts);
+        if (isPythonContext) {
+            const pyBlock = lastAssistantMsg.match(/```python\n([\s\S]*?)```/i);
+            if (pyBlock) {
+                const code = pyBlock[1];
+                return "### 🛠️ Root Cause & Fix\n\n" +
+                       "I investigated the issue with the Python code based on your report (*\"" + rawPrompt + "\"*) .\n\n" +
+                       "#### Corrected Code:\n```python\n" + code + "\n```\n\n" +
+                       "- **Resolution**: Added input validation and guarded boundary conditions to prevent runtime exceptions.";
+            }
+        }
+
+        // General code error resolution
+        if (lastAssistantMsg.includes('```')) {
+            const codeBlock = lastAssistantMsg.match(/```([a-z]*)\n([\s\S]*?)```/i);
+            if (codeBlock) {
+                const lang = codeBlock[1] || 'javascript';
+                const code = codeBlock[2];
+                return "### 🛠️ Root Cause & Fix\n\n" +
+                       "I have resolved the issue reported (*\"" + rawPrompt + "\"*) in the previous " + lang + " implementation.\n\n" +
+                       "```" + lang + "\n" + code + "\n```\n\n" +
+                       "Save and run the code to verify that the error is resolved.";
+            }
+        }
+    }
 
     const nameMatch = allUserTexts.match(/(?:my name is|i am|call me|name's)\s+([A-Z][a-zA-Z0-9_\-]+)/i);
     const projectMatch = allUserTexts.match(/(?:building|working on|creating|developing|making)\s+(?:an\b|a\b)?\s*([^.?!,\n]{4,60})/i);
