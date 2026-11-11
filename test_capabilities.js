@@ -626,6 +626,140 @@ async function main() {
         }
     });
 
+    // ========================================================
+    // SECTION 24: 10 REAL EVALUATION TESTS
+    // ========================================================
+
+    // 47. Real Eval 1: Latest Endpoint Central release
+    await runAsyncTest('47. Real Eval 1: "What is the latest Endpoint Central release?"', async () => {
+        const res = await orchestrateRequest({
+            prompt: 'What is the latest Endpoint Central release?',
+            conversationId: 'eval_epc_release_' + Date.now()
+        });
+        assert(res.capability === CAPABILITIES.WEB_RESEARCH || res.capability === CAPABILITIES.NORMAL_CHAT || res.capability === CAPABILITIES.TECHNICAL_TROUBLESHOOTING);
+        assert(res.response.includes('Endpoint Central') || res.response.includes('ManageEngine'));
+        assert(typeof res.response === 'string' && res.response.length > 50);
+    });
+
+    // 48. Real Eval 2: Direct URL reading with 4-section grounding
+    await runAsyncTest('48. Real Eval 2: Direct URL reading from manageengine.com', async () => {
+        const url = 'https://www.manageengine.com/products/desktop-central/software-deployment.html';
+        const res = await orchestrateRequest({
+            prompt: url,
+            conversationId: 'eval_url_read_' + Date.now()
+        });
+        assert.strictEqual(res.capability, CAPABILITIES.URL_READER);
+        assert(res.response.includes('### What the webpage says'));
+        assert(res.response.includes('### Steps mentioned on the webpage') || res.response.includes('### Important details'));
+        assert(res.response.includes('### Source'));
+        assert(res.response.includes('manageengine.com'));
+    });
+
+    // 49. Real Eval 3: How to create image repository in Endpoint Central OSD
+    await runAsyncTest('49. Real Eval 3: Image repository in Endpoint Central OSD with official steps', async () => {
+        const res = await orchestrateRequest({
+            prompt: 'How to create image repository in Endpoint Central OSD?',
+            conversationId: 'eval_osd_repo_' + Date.now()
+        });
+        assert(res.capability === CAPABILITIES.TECHNICAL_TROUBLESHOOTING || res.capability === CAPABILITIES.WEB_RESEARCH);
+        assert(res.response.includes('Image Repository') || res.response.includes('image repository'));
+        assert(res.response.includes('Network Share') || res.response.includes('UNC') || res.response.includes('HTTP'));
+        assert(res.response.includes('manageengine.com') || res.response.includes('ManageEngine'));
+    });
+
+    // 50. Real Eval 4: Update macOS on an M4 Mac using Terminal
+    await runAsyncTest('50. Real Eval 4: Update macOS on M4 Mac via Terminal with Apple Silicon notes', async () => {
+        const res = await orchestrateRequest({
+            prompt: 'How to update macOS on an M4 Mac using Terminal?',
+            conversationId: 'eval_m4_terminal_' + Date.now()
+        });
+        assert.strictEqual(res.capability, CAPABILITIES.TECHNICAL_TROUBLESHOOTING);
+        assert(res.response.includes('softwareupdate'));
+        assert(res.response.includes('Apple Silicon') || res.response.includes('ownership') || res.response.includes('sudo'));
+    });
+
+    // 51. Real Eval 5: Multi-turn Thalapathy -> What movies has he acted in?
+    await runAsyncTest('51. Real Eval 5: Multi-turn: Thalapathy -> What movies has he acted in?', async () => {
+        const convId = 'eval_thalapathy_conv_' + Date.now();
+        const turn1 = await orchestrateRequest({
+            prompt: 'Who is Thalapathy in Tamil Nadu?',
+            conversationId: convId
+        });
+        assert(turn1.response.includes('Vijay') || turn1.response.includes('Joseph Vijay'));
+        
+        const turn2 = await orchestrateRequest({
+            prompt: 'What movies has he acted in?',
+            conversationId: convId
+        });
+        assert(turn2.response.includes('Vijay') || turn2.response.includes('Thalapathy'));
+        assert(turn2.response.includes('Ghilli') || turn2.response.includes('Master') || turn2.response.includes('Leo'));
+    });
+
+    // 52. Real Eval 6: Multi-turn Gokul Santol -> Is it powder?
+    await runAsyncTest('52. Real Eval 6: Multi-turn: Gokul Santol -> Is it powder?', async () => {
+        const convId = 'eval_santol_conv_' + Date.now();
+        const turn1 = await orchestrateRequest({
+            prompt: 'I am asking about Gokul Santol.',
+            conversationId: convId
+        });
+        assert(turn1.response.includes('Gokul Santol') || turn1.response.includes('powder') || turn1.response.includes('sandalwood'));
+        assert(!turn1.response.toLowerCase().includes('chinmayi'));
+
+        const turn2 = await orchestrateRequest({
+            prompt: 'Is it powder?',
+            conversationId: convId
+        });
+        assert(turn2.response.toLowerCase().includes('yes'));
+        assert(turn2.response.toLowerCase().includes('powder'));
+        assert(!turn2.response.toLowerCase().includes('baking powder'));
+    });
+
+    // 53. Real Eval 7: gokul santol standalone ambiguity handling
+    await runAsyncTest('53. Real Eval 7: "gokul santol" qualified interpretation without hallucinations', async () => {
+        const res = await orchestrateRequest({
+            prompt: 'gokul santol',
+            conversationId: 'eval_santol_solo_' + Date.now()
+        });
+        assert(res.response.includes('Gokul Santol') || res.response.includes('sandalwood') || res.response.includes('talcum'));
+        assert(!res.response.toLowerCase().includes('chinmayi'));
+        assert(!res.response.toLowerCase().includes('baking powder'));
+    });
+
+    // 54. Real Eval 8: silent install command for Skype Windows
+    await runAsyncTest('54. Real Eval 8: silent install command for Skype Windows', async () => {
+        const res = await orchestrateRequest({
+            prompt: 'silent install command for Skype Windows',
+            conversationId: 'eval_skype_silent_' + Date.now()
+        });
+        assert.strictEqual(res.capability, CAPABILITIES.TECHNICAL_TROUBLESHOOTING);
+        assert(res.response.includes('/VERYSILENT') || res.response.includes('/qn') || res.response.includes('/silent'));
+        assert(res.response.includes('/NORESTART') || res.response.includes('norestart'));
+    });
+
+    // 55. Real Eval 9: Image upload question routing
+    await runAsyncTest('55. Real Eval 9: Image upload "What is wrong in this screenshot?"', async () => {
+        const res = await orchestrateRequest({
+            prompt: 'What is wrong in this screenshot?',
+            attachments: [{ type: 'image', data: 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==', mimeType: 'image/png' }],
+            conversationId: 'eval_img_' + Date.now()
+        });
+        assert.strictEqual(res.capability, CAPABILITIES.IMAGE_UNDERSTANDING);
+        assert(typeof res.response === 'string' && res.response.length > 20);
+    });
+
+    // 56. Real Eval 10: PDF document upload question routing
+    await runAsyncTest('56. Real Eval 10: PDF document upload "Summarize this document."', async () => {
+        const samplePdfContent = 'AuraAI System Architecture Documentation. Section 1: Overview of Multimodal Router and Orchestrator.';
+        const res = await orchestrateRequest({
+            prompt: 'Summarize this document.',
+            attachments: [{ type: 'pdf', filename: 'architecture.pdf', data: Buffer.from(samplePdfContent).toString('base64'), mimeType: 'application/pdf' }],
+            conversationId: 'eval_pdf_' + Date.now()
+        });
+        assert.strictEqual(res.capability, CAPABILITIES.DOCUMENT_READER);
+        assert(typeof res.response === 'string' && res.response.length > 20);
+    });
+
+
     console.log('\n========================================================');
     console.log(`🎯 COMPREHENSIVE TEST SUITE RESULT: ${passed}/${total} PASSED`);
     console.log('========================================================\n');

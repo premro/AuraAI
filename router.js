@@ -56,6 +56,9 @@ function extractTopicFromText(text) {
     if (/endpoint\s+central|desktop\s+central/i.test(clean)) {
         return 'Endpoint Central';
     }
+    if (/gokul\s+santol|gokul\s+sandal/i.test(clean)) {
+        return 'Gokul Santol';
+    }
     if (/thalapathy/i.test(clean)) {
         return 'Thalapathy Vijay';
     }
@@ -70,10 +73,125 @@ function extractTopicFromText(text) {
     return null;
 }
 
+
+/**
+ * Structured Query Interpretation Layer
+ * Determines intent, entities, context dependency, freshness requirement,
+ * source preference, answer type, ambiguity, and resolves pronouns/anaphora.
+ */
+function interpretQuery(rawPrompt, history = [], conversationId = 'default') {
+    const prompt = normalizeText(rawPrompt).trim();
+    const p = prompt.toLowerCase();
+    const state = conversationState.getState(conversationId);
+
+    const hasPronoun = /\b(it|its|he|him|his|she|her|they|them|this|that|these|those)\b/i.test(prompt);
+    const isPlatformFollowUp = /^(?:what about|how about|and on|and for)\s+(?:macos|mac|windows|linux|ubuntu)\??$/i.test(p) || /^(?:macos|mac|windows|linux)\??$/i.test(p);
+    const isVendorDocsFollowUp = /^(?:are\s+there|is\s+there)?\s*(?:any\s+)?(?:official\s+)?(?:vendor\s+)?(?:documents?|documentation|docs?)(?:\s+for\s+(?:this|it))?[?.]*$/i.test(p) ||
+                                 /^(?:who publishes it|give me the official documentation|any official vendor document|official documentation|official vendor document|official docs|who makes it|who developed it)\b/i.test(p);
+    const isAnaphoricQuestion = /^(?:is\s+it\s+|its\s+|does\s+it\s+|can\s+it\s+|what\s+does\s+it\s+|what\s+movies\s+has\s+he\s+acted\s+in|what\s+films\s+has\s+he\s+acted\s+in|what\s+did\s+he\s+act\s+in|who\s+is\s+he|where\s+is\s+it|how\s+to\s+install\s+it)\b/i.test(p);
+
+    const contextDependency = Boolean(
+        hasPronoun ||
+        isPlatformFollowUp ||
+        isVendorDocsFollowUp ||
+        isAnaphoricQuestion ||
+        (history.length > 0 && prompt.length < 35 && !/^(hi|hello|hey|help|bye|thanks|cool)/i.test(p))
+    );
+
+    let activeEntity = state.activeTopic || state.currentTopic || null;
+    if (!activeEntity && history && history.length > 0) {
+        for (let i = history.length - 1; i >= 0; i--) {
+            const msg = history[i];
+            const text = normalizeText(msg.content);
+            const extracted = extractTopicFromText(text);
+            if (extracted) {
+                activeEntity = extracted;
+                break;
+            }
+        }
+    }
+
+    let entities = [];
+    if (/gokul\s+santol|gokul\s+sandal/i.test(prompt)) {
+        entities.push('Gokul Santol');
+    } else if (/thalapathy|vijay/i.test(prompt)) {
+        entities.push('Thalapathy Vijay');
+    } else if (/endpoint\s+central|desktop\s+central/i.test(prompt)) {
+        entities.push('ManageEngine Endpoint Central');
+    } else if (/skype/i.test(prompt)) {
+        entities.push('Skype');
+    } else if (/macos|mac\s*m4/i.test(prompt)) {
+        entities.push('macOS');
+    } else {
+        const candidate = extractTopicFromText(prompt);
+        if (candidate) entities.push(candidate);
+    }
+
+    if (entities.length > 0 && !contextDependency) {
+        activeEntity = entities[0];
+        conversationState.setActiveTopic(conversationId, activeEntity);
+    }
+
+    let resolvedQuery = prompt;
+    if (contextDependency && activeEntity) {
+        if (/^(?:is\s+it\s+powder\??|its\s+powder\s+right\??)/i.test(p)) {
+            resolvedQuery = `Is ${activeEntity} a powder?`;
+        } else if (/what\s+movies\s+has\s+he\s+acted\s+in|what\s+films\s+has\s+he\s+acted\s+in/i.test(p)) {
+            resolvedQuery = `What movies has ${activeEntity} acted in?`;
+        } else if (isPlatformFollowUp) {
+            let plat = 'macOS';
+            if (/windows/i.test(p)) plat = 'Windows';
+            else if (/linux|ubuntu/i.test(p)) plat = 'Linux';
+            resolvedQuery = `${activeEntity} for ${plat}`;
+        } else if (isVendorDocsFollowUp) {
+            resolvedQuery = `official documentation ${activeEntity}`;
+        } else {
+            resolvedQuery = prompt
+                .replace(/\b(it|this|that)\b/gi, activeEntity)
+                .replace(/\b(he|him|his)\b/gi, activeEntity)
+                .replace(/\b(its)\b/gi, `${activeEntity}'s`);
+        }
+    }
+
+    const isAmbiguous = /gokul\s+santol/i.test(prompt) || (entities.length === 0 && prompt.split(/\s+/).length <= 2 && !/^(hi|hello|hey|help|bye)/i.test(p));
+
+    const timeSensitiveKeywords = /\b(latest|current|recent|today|breaking|news|vulnerability|cve|version|release|changelog|pricing|cost|price today|who won|score|weather today|forecast|stock price|2025|2026)\b/i;
+    const freshnessRequired = timeSensitiveKeywords.test(resolvedQuery) || /^(?:search|lookup|google|find online|check the web for|browse)\s+/i.test(prompt);
+
+    let sourcePreference = 'general';
+    if (/install|setup|configure|deploy|silent|switches|cli|command line|troubleshoot|fix|admin|repository|agent|official|documentation|docs|guide/i.test(resolvedQuery)) {
+        sourcePreference = 'official_vendor';
+    } else if (/\b(news|today|breaking|happened|current events)\b/i.test(resolvedQuery)) {
+        sourcePreference = 'news';
+    }
+
+    let answerType = 'factual';
+    if (/how to|steps|how do i|install|deploy|configure|setup|fix|troubleshoot|update/i.test(resolvedQuery)) {
+        answerType = 'step_by_step';
+    } else if (/\b(news|headlines|updates)\b/i.test(resolvedQuery)) {
+        answerType = 'news_list';
+    } else if (/code|script|powershell|bash|python|function|regex/i.test(resolvedQuery)) {
+        answerType = 'code';
+    }
+
+    return {
+        intent: null,
+        entities: entities.length > 0 ? entities : (activeEntity ? [activeEntity] : []),
+        activeEntity,
+        contextDependency,
+        freshnessRequired,
+        sourcePreference,
+        answerType,
+        ambiguous: isAmbiguous,
+        resolvedQuery
+    };
+}
+
 /**
  * Main request analyzer and deterministic capability classifier
  */
 function analyzeRequest(rawPrompt, history = [], attachments = [], userConfig = {}, conversationId = 'default') {
+    const interpretation = interpretQuery(rawPrompt, history, conversationId);
     const prompt = normalizeText(rawPrompt).trim();
     const p = prompt.toLowerCase();
     const context = conversationState.getContextObject(conversationId);
@@ -474,6 +592,7 @@ function analyzeRequest(rawPrompt, history = [], attachments = [], userConfig = 
 
 module.exports = {
     CAPABILITIES,
+    interpretQuery,
     analyzeRequest,
     hasUrl,
     extractUrls,

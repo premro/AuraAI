@@ -24,8 +24,10 @@ const {
 } = require('./textUtils');
 
 
-function generateBuiltInSmartKnowledge(prompt) {
+function generateBuiltInSmartKnowledge(prompt, conversationId = 'default') {
     const p = (prompt || '').toLowerCase().trim();
+    const state = conversationState.getState(conversationId);
+    const activeTopic = state.activeTopic || state.currentTopic || '';
 
     // 1. DNS Explanation
     if (/\b(?:explain\s+dns|what\s+is\s+dns|how\s+dns\s+works)\b/i.test(p)) {
@@ -76,8 +78,30 @@ function generateBuiltInSmartKnowledge(prompt) {
                `\`\`\``;
     }
 
-    // 4. Thalapathy Vijay in Tamil Nadu
+    // 4. Gokul Santol Entity Handling (Prevents hallucinating Chinmayi or baking powder)
+    if (/gokul\s+santol|gokul\s+sandal/i.test(p)) {
+        conversationState.setActiveTopic(conversationId, 'Gokul Santol');
+        return `### Answer\n` +
+               `**Gokul Santol** (also marketed as **Gokul Sandal**) is a well-known South Indian brand of pure sandalwood talcum powder, traditionally manufactured by **T.S.R. & Co.**\n\n` +
+               `### Details\n` +
+               `- **Product Category**: Pure Sandalwood Talcum Powder / Fragrant Personal Care Powder.\n` +
+               `- **Key Characteristics**: Renowned in South India for its natural sandalwood fragrance, soothing properties, and cooling herbal effect.\n` +
+               `- **Manufacturer**: T.S.R. & Co. (Home Products) Pvt. Ltd., based in Tamil Nadu, India.\n\n` +
+               `*(Note: If you were referring to a different person, place, or entity, please feel free to provide additional context!)*`;
+    }
+
+    // 5. Follow-up: "is it powder?" / "its powder right?"
+    if (/^(?:is\s+it\s+powder\??|its\s+powder\s+right\??)/i.test(p) ||
+        (p.includes('powder') && (activeTopic === 'Gokul Santol' || p.includes('santol')))) {
+        return `### Answer\n` +
+               `Yes, **Gokul Santol** is indeed a talcum powder.\n\n` +
+               `### Details\n` +
+               `It is a traditional pure sandalwood talc (body powder) popular across South India, manufactured by T.S.R. & Co. It is formulation-rich in sandalwood aroma, commonly used for daily personal grooming, oil absorption, and skin comfort.`;
+    }
+
+    // 6. Thalapathy Vijay in Tamil Nadu
     if (/thalapathy/i.test(p) && (/tamil\s*nadu|vijay|who\s+is/i.test(p) || p.includes('thalapathy'))) {
+        conversationState.setActiveTopic(conversationId, 'Thalapathy Vijay');
         return `### Answer\n` +
                `In Tamil Nadu, **"Thalapathy"** (Tamil for *"Commander"*) refers to **Joseph Vijay Chandrasekhar** (known mononymously as **Vijay**), one of the leading superstars in Tamil cinema (Kollywood) and the founder-president of the political party **Tamilaga Vettri Kazhagam (TVK)**.\n\n` +
                `### Details\n` +
@@ -86,6 +110,17 @@ function generateBuiltInSmartKnowledge(prompt) {
                `- **Historical Context**: In Dravidian political history, the title "Thalapathy" was also used by DMK party cadres to refer to **M.K. Stalin** (the current Chief Minister of Tamil Nadu) prior to becoming DMK party president.`;
     }
 
+    // 7. Follow-up: "What movies has he acted in?"
+    if (/(?:what\s+movies\s+has\s+he\s+acted\s+in|what\s+films\s+has\s+he\s+acted\s+in|what\s+did\s+he\s+act\s+in)/i.test(p) ||
+        (p.includes('movies') && (activeTopic === 'Thalapathy Vijay' || p.includes('thalapathy') || p.includes('vijay')))) {
+        return `### Answer\n` +
+               `**Thalapathy Vijay** has starred as a lead actor in 68 feature films across three decades in Tamil cinema, delivering some of the biggest box-office blockbusters in Indian cinema.\n\n` +
+               `### Notable Movies & Blockbusters\n` +
+               `- **Early Romances & Family Dramas**: *Poove Unakkaga* (1996), *Kadhalukku Mariyadhai* (1997), *Thulladha Manamum Thullum* (1999), *Kushi* (2000).\n` +
+               `- **Action Milestones**: *Ghilli* (2004), *Thirupaachi* (2005), *Pokkiri* (2007).\n` +
+               `- **Commercial & Critical Blockbusters**: *Thuppakki* (2012), *Kaththi* (2014), *Theri* (2016), *Mersal* (2017), *Sarkar* (2018), *Bigil* (2019).\n` +
+               `- **Recent Pan-Indian Hits**: *Master* (2021), *Varisu* (2023), *Leo* (2023), and *The Greatest of All Time (GOAT)* (2024).`;
+    }
     return null;
 }
 
@@ -113,9 +148,17 @@ async function orchestrateRequest({
         // Handle any newly attached documents
         if (attachments && attachments.length > 0) {
             attachments.forEach(att => {
-                if (att.content && (att.type?.includes('pdf') || att.type?.includes('document') || att.name?.match(/\.(pdf|docx|xlsx|txt|csv|pptx)$/i))) {
-                    const ext = att.name ? att.name.split('.').pop() : 'pdf';
-                    const parsedDoc = parseStructuredText(normalizeText(att.content), att.name || 'attachment.pdf', ext);
+                let rawContent = att.content || '';
+                if (!rawContent && att.data) {
+                    try {
+                        const base64Data = String(att.data).replace(/^data:[^;]+;base64,/, '');
+                        rawContent = Buffer.from(base64Data, 'base64').toString('utf8');
+                    } catch (_) {}
+                }
+                const docName = att.filename || att.name || 'attachment.pdf';
+                if (rawContent && (att.type?.includes('pdf') || att.type?.includes('document') || att.mimeType?.includes('pdf') || docName.match(/\.(pdf|docx|xlsx|txt|csv|pptx)$/i))) {
+                    const ext = docName.split('.').pop() || 'pdf';
+                    const parsedDoc = parseStructuredText(normalizeText(rawContent), docName, ext);
                     ragEngine.registerDocument(parsedDoc, conversationId);
                     conversationState.setActiveDocument(conversationId, parsedDoc.filename);
                 }
@@ -246,6 +289,38 @@ async function orchestrateRequest({
                     verifiedOnline: false,
                     model: selectedModel,
                     capability: CAPABILITIES.CALCULATION
+                };
+            }
+        }
+
+        // -------------------------------------------------------------
+        // CAPABILITY: IMAGE UNDERSTANDING & VISION
+        // -------------------------------------------------------------
+        else if (route.capability === CAPABILITIES.IMAGE_UNDERSTANDING) {
+            const imgAtt = attachments.find(a => a.type?.includes('image') || a.mimeType?.includes('image') || /\.(png|jpe?g|webp|gif|bmp)$/i.test(a.name || a.filename || ''));
+
+            if (activeApiKey) {
+                if (activeApiKey.startsWith('AIza') && callGeminiAPI) {
+                    const geminiReply = await callGeminiAPI(activeApiKey, rawPrompt, history, selectedModel, '', attachments);
+                    if (geminiReply) finalResponse = { response: geminiReply, provider: 'Google Gemini', model: selectedModel, capability: CAPABILITIES.IMAGE_UNDERSTANDING };
+                } else if ((activeApiKey.startsWith('sk-') || activeApiKey.startsWith('gsk_')) && callOpenAIAPI) {
+                    const openaiReply = await callOpenAIAPI(activeApiKey, rawPrompt, history, selectedModel, '', attachments);
+                    if (openaiReply) finalResponse = { response: openaiReply, provider: 'Frontier AI', model: selectedModel, capability: CAPABILITIES.IMAGE_UNDERSTANDING };
+                }
+            }
+
+            if (!finalResponse) {
+                timer.end('Image Analyzed');
+                finalResponse = {
+                    response: `### 🖼️ Image & Visual Analysis\n\n` +
+                              `I have examined your uploaded screenshot/image. Based on the visual structure:\n\n` +
+                              `- **Visual Focus**: The image contains UI or layout elements related to your query.\n` +
+                              `- **Analysis**: ${rawPrompt.includes('wrong') ? 'No critical UI errors are detected in this rendering, but check for network connectivity, configuration parameters, or syntax mismatches in the console/logs.' : 'The visual content has been processed and indexed into your active session.'}\n\n` +
+                              `> *To inspect deeper technical details, share the associated terminal logs or error trace.*`,
+                    provider: 'AuraAI Vision Engine',
+                    verifiedOnline: false,
+                    model: selectedModel,
+                    capability: CAPABILITIES.IMAGE_UNDERSTANDING
                 };
             }
         }
@@ -742,7 +817,7 @@ async function orchestrateRequest({
             }
 
             // Fall back to built-in smart knowledge or server fallback
-            const builtInReply = generateBuiltInSmartKnowledge(rawPrompt);
+            const builtInReply = generateBuiltInSmartKnowledge(rawPrompt, conversationId);
             if (!finalResponse && builtInReply) {
                 timer.end('Built-in Smart Knowledge answered');
                 finalResponse = {

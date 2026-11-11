@@ -186,7 +186,47 @@ function normalizeToolResult(result) {
     };
 }
 
+
+/**
+ * Model input normalization layer.
+ * Enforces strict typing before any LLM API call:
+ * - messages: array of { role: string, content: string }
+ * - systemPrompt: string
+ * - userMessage: string
+ * - context: string
+ * - images: array of image objects or base64 strings
+ * - documents: array of document chunks or summaries
+ */
+function normalizeModelInput(input = {}) {
+    const rawMessages = input.messages || [];
+    const normMessages = Array.isArray(rawMessages) ? rawMessages.map(m => ({
+        role: normalizeText(m.role || 'user'),
+        content: normalizeText(m.content != null ? m.content : (m.text || ''))
+    })) : [];
+
+    const normSysPrompt = normalizeText(input.systemPrompt || '');
+    const normUserMsg = normalizeText(input.userMessage || '');
+    const normContext = normalizeText(input.context || '');
+
+    if (normUserMsg && (normMessages.length === 0 || normMessages[normMessages.length - 1].content !== normUserMsg)) {
+        normMessages.push({ role: 'user', content: normUserMsg });
+    }
+
+    const normImages = Array.isArray(input.images) ? input.images.filter(Boolean) : [];
+    const normDocs = Array.isArray(input.documents) ? input.documents.filter(Boolean) : [];
+
+    return {
+        messages: normMessages,
+        systemPrompt: normSysPrompt,
+        userMessage: normUserMsg,
+        context: normContext,
+        images: normImages,
+        documents: normDocs
+    };
+}
+
 module.exports = {
+    normalizeModelInput,
     normalizeText,
     createWebResult,
     createDocumentResult,
