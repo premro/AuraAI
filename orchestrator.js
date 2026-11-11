@@ -153,38 +153,53 @@ async function orchestrateRequest({
   return { response: reply, provider: label, model, capability: route.capability, verifiedOnline: !!searchResults, debug };
 }
 
-// Standalone handler adhering to handleChatRequest signature
-async function handleChatRequest({ userPrompt, history = [], provider, model, callModelFn }) {
-  let searchQuery = userPrompt;
-  const callModel = callModelFn || (async () => null);
+// Unified chat handler adhering to handleChatRequest signature
+async function handleChatRequest(options) {
+  // If invoked with server.js pipeline options (callGeminiAPI, callOpenAIAPI, generateSmartResponseFallback, userConfig, etc.)
+  if (options.callGeminiAPI || options.callOpenAIAPI || options.generateSmartResponseFallback || options.userConfig || options.attachments) {
+    return await orchestrateRequest(options);
+  }
 
+  // Standalone RAG execution flow
+  const userPrompt = options.userPrompt || options.prompt || '';
+  const history = options.history || [];
+  const model = options.model || 'gpt-4o-mini';
+  const provider = options.provider || pickProvider(options.apiKey || '');
+  const callModel = options.callModelFn || (async () => null);
+
+  // 1. Rewrite and normalize spelling (e.g., "crowdstike" -> "CrowdStrike")
+  let searchQuery = normalizeTechTypos(userPrompt);
   try {
     const rewritten = await callModel({
       systemPrompt: H.REWRITE_SYSTEM,
       prompt: `History:\n${JSON.stringify(history)}\n\nCurrent message: ${userPrompt}`
     });
     if (rewritten && rewritten.trim()) {
-      searchQuery = rewritten.trim();
+      searchQuery = normalizeTechTypos(rewritten.trim());
     }
   } catch (e) {
     console.warn("Query rewrite failed, using original prompt:", e.message);
   }
 
+  // 2. Perform retrieval with wiki bypass for version queries
   const isDynamic = isDynamicQuery(searchQuery);
   const searchResults = await searchWeb(searchQuery, {
     allowStaticWiki: !isDynamic
   });
 
+  // 3. Build prompt payload based on search outcome
   let finalSystemPrompt = H.SYSTEM_PROMPT;
   let finalUserPrompt = userPrompt;
 
   if (searchResults && searchResults.length > 0) {
     finalUserPrompt = `Context Sources:\n${JSON.stringify(searchResults)}\n\nUser Question: ${userPrompt}`;
   } else {
+    // Retrieval yielded no hits: Use fallback instructions instead of refusing
     finalSystemPrompt = `${H.SYSTEM_PROMPT}\n\n${H.FALLBACK_PROMPT}`;
     finalUserPrompt = userPrompt;
   }
 
+  // 4. Generate response via model
   return await callModel({
     systemPrompt: finalSystemPrompt,
     prompt: finalUserPrompt,
