@@ -2489,7 +2489,7 @@ function handleRequest(req, res) {
         readRequestBody(req).then(async (parsed) => {
             try {
                 const messages = parsed.messages || [];
-                const lastUserMessage = [...messages].reverse().find(m => m.role === 'user')?.content || 'hi';
+                const lastUserMessage = parsed.prompt || [...messages].reverse().find(m => m.role === 'user')?.content || 'hi';
                 const userConfig = {
                     apiKey: parsed.apiKey || '',
                     model: parsed.model || 'gpt-4o-mini',
