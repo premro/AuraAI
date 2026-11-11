@@ -1757,6 +1757,15 @@ function fetchUrlContent(targetUrl) {
 async function handleUrlInput(rawPrompt, p, userConfig = {}) {
     if (!webRetrieval.hasDirectUrl(rawPrompt)) return null;
 
+    // Do NOT treat pasted chat transcripts, logs, or summarization requests as URL reader inputs
+    const hasTranscriptSignals = /(?:customer|agent|client|support|caller|rep|engineer|tech|user|premnath\.[a-z]):\s*/i.test(rawPrompt) ||
+                                 /\b\d{1,2}:\d{2}(?::\d{2})?\s*(?:AM|PM|am|pm)?\b/.test(rawPrompt) ||
+                                 /\b[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+:/.test(rawPrompt);
+    const isSummaryRequest = /\b(summari[sz]e|summary|tl;?dr|ticket summary|action items?|next steps?)\b/i.test(rawPrompt);
+    if (rawPrompt.length > 200 && (hasTranscriptSignals || isSummaryRequest)) {
+        return null;
+    }
+
     // DIRECT URL MODE: Fetch URL directly, determine format, extract content, ground LLM
     const retrievalResult = await webRetrieval.executeWebRetrievalPipeline(rawPrompt);
     if (!retrievalResult || !retrievalResult.success) {
@@ -2011,6 +2020,24 @@ async function generateSmartResponse(prompt, history = [], userConfig = {}) {
         return langReply;
     }
 
+    // Priority: Issue Summary & Transcript Analysis (Before URL analyzer)
+    const hasTranscriptSignals = /(?:customer|agent|client|support|caller|rep|engineer|tech|user|premnath\.[a-z]):\s*/i.test(rawPrompt) ||
+                                 /\b\d{1,2}:\d{2}(?::\d{2})?\s*(?:AM|PM|am|pm)?\b/.test(rawPrompt) ||
+                                 /\b[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+:/.test(rawPrompt);
+    const isSummaryRequest = /\b(summari[sz]e|summary|tl;?dr|ticket summary|action items?|next steps?)\b/i.test(rawPrompt);
+    const isPastedTranscript = (hasTranscriptSignals || isSummaryRequest) && rawPrompt.length > 200;
+
+    if (isPastedTranscript ||
+        p.includes('issue summary') || 
+        p.includes('summarize') || 
+        p.includes('summary') || 
+        p.includes('transcript') || 
+        p.includes('recap') ||
+        p.includes('incident report') ||
+        p.includes('meeting notes')) {
+        return buildIssueSummaryFromHistory(history, rawPrompt);
+    }
+
     // 1.52 URL & Documentation Link Analyzer
     const urlReply = await handleUrlInput(rawPrompt, p);
     if (urlReply) {
@@ -2109,24 +2136,7 @@ async function generateSmartResponse(prompt, history = [], userConfig = {}) {
         return mathResult;
     }
 
-    // Detect transcripts, support chat logs, and summarization requests
-    const hasTranscriptSignals = /(?:customer|agent|client|support|caller|rep|engineer|tech|user):\s+/i.test(rawPrompt) ||
-                                 /\b\d{1,2}:\d{2}(?::\d{2})?\s*(?:AM|PM|am|pm)?\b/.test(rawPrompt) ||
-                                 /\b[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+:/.test(rawPrompt);
-    const isSummaryRequest = /\b(summari[sz]e|summary|tl;?dr|ticket summary|action items?|next steps?)\b/i.test(rawPrompt);
-    const isPastedTranscript = (hasTranscriptSignals || isSummaryRequest) && rawPrompt.length > 200;
 
-    // 3. Issue Summary / Transcript Summarization Check
-    if (isPastedTranscript ||
-        p.includes('issue summary') || 
-        p.includes('summarize') || 
-        p.includes('summary') || 
-        p.includes('transcript') || 
-        p.includes('recap') ||
-        p.includes('incident report') ||
-        p.includes('meeting notes')) {
-        return buildIssueSummaryFromHistory(history, rawPrompt);
-    }
 
     // 4. ManageEngine Endpoint Central Queries (Agent Installation vs Migration - ignore if transcript)
     if (!isPastedTranscript && (p.includes('endpoint central') || p.includes('desktop central')) && (p.includes('agent') || p.includes('install') || p.includes('setup') || p.includes('deploy') || p.includes('dcagent'))) {
