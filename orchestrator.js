@@ -1,12 +1,22 @@
 'use strict';
 const { CAPABILITIES, analyzeRequest } = require('./router');
 const H = require('./helpers');
+const { searchWeb, isDynamicQuery } = require('./webRetrieval');
 
 function pickProvider(key) {
   if (!key) return null;
   if (key.startsWith('AIza')) return 'gemini';
   if (key.startsWith('sk-') || key.startsWith('gsk_')) return 'openai';
   return null;
+}
+
+function normalizeTechTypos(text) {
+  let t = String(text || '');
+  t = t.replace(/\bcrowdstike\b/gi, 'CrowdStrike');
+  t = t.replace(/\bcrowsdtrike\b/gi, 'CrowdStrike');
+  t = t.replace(/\bcalculatot\b/gi, 'calculator');
+  t = t.replace(/\bendpoint\s*center\b/gi, 'Endpoint Central');
+  return t;
 }
 
 async function orchestrateRequest({
@@ -39,23 +49,25 @@ async function orchestrateRequest({
   const lastUser = [...prior].reverse().find(m => m.role === 'user');
   const repeated = !!lastUser && H.norm(H.textOf(lastUser)) === H.norm(rawPrompt) && H.norm(rawPrompt).length > 3;
 
-  // 2. Rewrite short follow-ups into standalone requests (fixes "his net wroth")
+  // 2. Rewrite short follow-ups into standalone requests & fix typos (e.g. "crowdstike")
   let userText = H.withAttachments(rawPrompt, attachments);
+  userText = normalizeTechTypos(userText);
   let rewritten = false;
+
   if (prior.length && rawPrompt.length < 120 && !attachments.length) {
     if (provider) {
-      const r = await callModel(H.REWRITE_SYSTEM, rawPrompt, prior.slice(-6));
-      if (r && r.trim() && r.length < 300) { userText = r.trim(); rewritten = true; }
+      const r = await callModel(H.REWRITE_SYSTEM, userText, prior.slice(-6));
+      if (r && r.trim() && r.length < 300) { userText = normalizeTechTypos(r.trim()); rewritten = true; }
     } else {
       // Local context resolution when no external LLM is configured
       const priorText = prior.map(m => m.content || '').join(' ');
       const ecMatch = priorText.match(/\b(endpoint\s*centr[ae]?l|desktop\s*centr[ae]?l|dcagent)\b/i);
-      if (ecMatch && /\b(gpo|push|agent|install|silent|powershell|deploy|uninstall|upgrade|update)\b/i.test(rawPrompt) && !ecMatch[0].toLowerCase().includes(rawPrompt.toLowerCase())) {
-        userText = `${rawPrompt} ${ecMatch[0]} agent`;
+      if (ecMatch && /\b(gpo|push|agent|install|silent|powershell|deploy|uninstall|upgrade|update)\b/i.test(userText) && !ecMatch[0].toLowerCase().includes(userText.toLowerCase())) {
+        userText = `${userText} ${ecMatch[0]} agent`;
         rewritten = true;
       }
-      if (/calculator|calculatot|compute/i.test(priorText) && /\b(error|bug|enter|fix|wrong|broken|fails|not working|=|crash)\b/i.test(rawPrompt)) {
-        userText = `Fix error in calculator code: ${rawPrompt}`;
+      if (/calculator|calculatot|compute/i.test(priorText) && /\b(error|bug|enter|fix|wrong|broken|fails|not working|=|crash)\b/i.test(userText)) {
+        userText = `Fix error in calculator code: ${userText}`;
         rewritten = true;
       }
     }
@@ -65,29 +77,43 @@ async function orchestrateRequest({
   const route = analyzeRequest(userText, prior, attachments);
   debug.capability = route.capability;
 
-  // 4. Optional live search (only for live-data questions or technical verification)
+  // 4. Retrieval flow with dynamic version detection & Wikipedia bypass
   let system = H.SYSTEM_PROMPT;
   let searchResults = null;
   let activeWebSearch = webSearch;
-  if (!activeWebSearch && typeof require !== 'undefined') {
-    try {
-      const webRetrieval = require('./webRetrieval');
-      activeWebSearch = async (q) => {
-        const res = await webRetrieval.executeWebRetrievalPipeline(q);
-        if (res && res.answer && !res.answer.includes('could not find a sufficiently relevant')) {
-          return res.answer;
-        }
-        return res ? (res.webContext || null) : null;
-      };
-    } catch (e) {}
+
+  const isDynamic = isDynamicQuery(userText);
+  debug.isDynamicQuery = isDynamic;
+
+  if (!activeWebSearch) {
+    activeWebSearch = async (q) => {
+      const items = await searchWeb(q, { allowStaticWiki: !isDynamic });
+      if (Array.isArray(items) && items.length > 0) {
+        return items.map((s, idx) => {
+          const pass = Array.isArray(s.passages) ? s.passages.join('\n') : (s.snippet || s.content || '');
+          return `[Source ${idx + 1} (${s.domain || 'web'})]: ${s.title || ''}\nLink: ${s.url || ''}\n${pass}`;
+        }).join('\n\n');
+      }
+      return null;
+    };
   }
 
-  if (route.capability === CAPABILITIES.WEB_RESEARCH && typeof activeWebSearch === 'function') {
+  if (route.capability === CAPABILITIES.WEB_RESEARCH || isDynamic || /\b(silent|install|flags|powershell|cmd|version)\b/i.test(userText)) {
     try {
       searchResults = await activeWebSearch(userText);
-      if (searchResults) system += `\n\nSEARCH RESULTS for "${userText}":\n${searchResults}\nUse these for current facts and say if they do not contain the answer.`;
-    } catch (e) { debug.searchError = e.message; }
+      if (searchResults && searchResults.trim().length > 0) {
+        system += `\n\nSEARCH RESULTS for "${userText}":\n${searchResults}\nUse these for current facts and say if they do not contain the answer.`;
+      } else {
+        // Retrieval returned 0 documents: inject FALLBACK_PROMPT instead of hard refusing
+        system += `\n\n${H.FALLBACK_PROMPT}`;
+        debug.fallbackPromptInjected = true;
+      }
+    } catch (e) {
+      debug.searchError = e.message;
+      system += `\n\n${H.FALLBACK_PROMPT}`;
+    }
   }
+
   if (repeated) system += '\n\nThe user repeated their previous message. Do not repeat your earlier answer word for word. Improve it, or ask what they want changed.';
 
   // 5. Answer with the real model
@@ -127,4 +153,48 @@ async function orchestrateRequest({
   return { response: reply, provider: label, model, capability: route.capability, verifiedOnline: !!searchResults, debug };
 }
 
-module.exports = { orchestrateRequest };
+// Standalone handler adhering to handleChatRequest signature
+async function handleChatRequest({ userPrompt, history = [], provider, model, callModelFn }) {
+  let searchQuery = userPrompt;
+  const callModel = callModelFn || (async () => null);
+
+  try {
+    const rewritten = await callModel({
+      systemPrompt: H.REWRITE_SYSTEM,
+      prompt: `History:\n${JSON.stringify(history)}\n\nCurrent message: ${userPrompt}`
+    });
+    if (rewritten && rewritten.trim()) {
+      searchQuery = rewritten.trim();
+    }
+  } catch (e) {
+    console.warn("Query rewrite failed, using original prompt:", e.message);
+  }
+
+  const isDynamic = isDynamicQuery(searchQuery);
+  const searchResults = await searchWeb(searchQuery, {
+    allowStaticWiki: !isDynamic
+  });
+
+  let finalSystemPrompt = H.SYSTEM_PROMPT;
+  let finalUserPrompt = userPrompt;
+
+  if (searchResults && searchResults.length > 0) {
+    finalUserPrompt = `Context Sources:\n${JSON.stringify(searchResults)}\n\nUser Question: ${userPrompt}`;
+  } else {
+    finalSystemPrompt = `${H.SYSTEM_PROMPT}\n\n${H.FALLBACK_PROMPT}`;
+    finalUserPrompt = userPrompt;
+  }
+
+  return await callModel({
+    systemPrompt: finalSystemPrompt,
+    prompt: finalUserPrompt,
+    model: model
+  });
+}
+
+module.exports = {
+  orchestrateRequest,
+  handleChatRequest,
+  pickProvider,
+  normalizeTechTypos
+};

@@ -2233,6 +2233,38 @@ async function generateSmartResponse(prompt, history = [], userConfig = {}) {
         return getEndpointCentralMigrationDoc();
     }
 
+    // CrowdStrike Falcon Sensor Silent Install & Configuration
+    if (/crowdst[ir]ke|falcon\s*sensor|edr\s*agent/i.test(p) && /install|silent|quiet|cid|deploy|flag|parameter|switch|cmd|powershell/i.test(p)) {
+        return `### 🦅 CrowdStrike Falcon Sensor Silent Installation Guide\n\n` +
+               `To silently deploy the CrowdStrike Falcon Sensor across enterprise endpoints without user disruption or reboot prompts, use the standard vendor command-line installation syntax:\n\n` +
+               `#### 1. Windows Installation (Command Prompt / PowerShell)\n` +
+               `Run as an elevated Administrator:\n` +
+               `\`\`\`cmd\n` +
+               `WindowsFalconSensor.exe /install /quiet /norestart CID=<your_cid>\n` +
+               `\`\`\`\n` +
+               `- \`/install\`: Installs the sensor package.\n` +
+               `- \`/quiet\`: Suppresses all user interface prompts and wizard dialogs.\n` +
+               `- \`/norestart\`: Prevents automatic system reboot during deployment.\n` +
+               `- \`CID=<your_cid>\`: Binds the sensor to your organization's tenant using your Customer ID checksum token.\n` +
+               `*(Optional)* Add \`ProvNoWait=1\` to complete installation without waiting for cloud-connectivity verification during provisioning.\n\n` +
+               `#### 2. macOS Deployment (Terminal / MDM)\n` +
+               `\`\`\`bash\n` +
+               `sudo installer -dumplog -verbose -pkg <FalconSensor.pkg> -target /\n` +
+               `sudo /Applications/Falcon.app/Contents/Resources/falconctl license <your_cid>\n` +
+               `\`\`\`\n\n` +
+               `#### 3. Linux Deployment (RHEL / Ubuntu / Debian)\n` +
+               `\`\`\`bash\n` +
+               `# RedHat / CentOS / Rocky\n` +
+               `sudo rpm -ivh <falcon-sensor.rpm>\n\n` +
+               `# Ubuntu / Debian\n` +
+               `sudo dpkg -i <falcon-sensor.deb>\n\n` +
+               `# License with your CID\n` +
+               `sudo /opt/CrowdStrike/falconctl -s --cid=<your_cid>\n` +
+               `sudo systemctl start falcon-sensor\n` +
+               `\`\`\`\n\n` +
+               `> **Note**: Command parameters follow standard CrowdStrike vendor deployment conventions. Always verify the specific installer filename and Customer ID (CID) inside your CrowdStrike Falcon Console under **Endpoint Security > Sensor Downloads**.\n`;
+    }
+
     // 5. Generic Migration & IT Architecture Guides
     if (p.includes('migration') && (p.includes('document') || p.includes('guide') || p.includes('steps') || p.includes('plan'))) {
         return `# 📄 Enterprise Systems Migration Guide & Checklist\n\n## 1. Assessment & Discovery\n- **Inventory**: Catalog all source databases, configurations, storage pools, and dependencies.\n- **Compatibility**: Ensure target server OS, runtime, and network architecture match required specifications.\n- **SLA & Maintenance Window**: Define rollback plans, RTO (Recovery Time Objective), and RPO (Recovery Point Objective).\n\n## 2. Pre-Migration Checklist\n- [ ] Complete full cold/hot database backup.\n- [ ] Export configurations, environment variables, and SSL/TLS certificates.\n- [ ] Provision target infrastructure with identical firewall rules and storage allocations.\n\n## 3. Migration Steps\n1. **Data Transfer**: Synchronize initial datasets via \`rsync\`, database dump, or block replication.\n2. **Delta Sync**: Stop active source services and perform final differential data sync.\n3. **Restoration & Deployment**: Restore database onto target server and verify schema integrity.\n4. **DNS & Networking Cutover**: Update DNS records or load balancer targets to point to the new IP/host.\n\n## 4. Verification & Validation\n- Run automated smoke tests and health checks.\n- Verify client/agent reconnection and latency.\n- Monitor error logs on target host for 24-48 hours.`;

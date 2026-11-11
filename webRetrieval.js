@@ -1556,16 +1556,16 @@ async function executeWebRetrievalPipeline(query, options = {}) {
 
 // 10. Direct Synthesis from Retrieved Passages (Zero API Key fallback)
 function synthesizeAnswerFromRetrievedContent(rawPrompt, retrievalResult) {
-    if (!retrievalResult) return "I could not find a reliable source that directly documents this procedure.";
+    if (!retrievalResult) return null;
 
-    // Low confidence handling
+    // Low confidence or empty sources: return null to allow model parametric knowledge and FALLBACK_PROMPT to answer
     if (retrievalResult.confidence === 'LOW') {
-        return retrievalResult.answer || "I could not find a reliable source that directly documents this procedure.";
+        return null;
     }
 
     const sources = retrievalResult.sources || [];
     if (sources.length === 0) {
-        return "I could not find a reliable source that directly documents this procedure.";
+        return null;
     }
 
     // Direct URL Mode Synthesis
@@ -1734,7 +1734,96 @@ function synthesizeAnswerFromRetrievedContent(rawPrompt, retrievalResult) {
     return output;
 }
 
+
+// ==========================================
+// Dynamic / Temporal Query Detection & Safe Web Search
+// ==========================================
+function isDynamicQuery(query) {
+  const dynamicRegex = /\b(latest|current|version|release|update|build|newest|patch notes)\b/i;
+  return dynamicRegex.test(String(query || ''));
+}
+
+async function fetchWikiKnowledge(query) {
+  try {
+    const clean = String(query || '')
+      .replace(/^(who is|who was|what is|what was|tell me about|explain|describe|can you explain|what does|how does)\s+/i, '')
+      .replace(/\?+$/, '')
+      .trim();
+    if (!clean || clean.length < 2) return null;
+
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), 3500);
+
+    const titleCased = clean.replace(/\b\w/g, l => l.toUpperCase()).replace(/ /g, '_');
+    const sumUrl = `https://en.wikipedia.org/api/rest_v1/page/summary/${encodeURIComponent(titleCased)}`;
+    const sumRes = await fetch(sumUrl, {
+      headers: { 'User-Agent': 'LocalAI/1.0 (Mozilla/5.0)' },
+      signal: controller.signal
+    });
+    clearTimeout(timeoutId);
+
+    if (sumRes.ok) {
+      const page = await sumRes.json();
+      if (page.extract && page.extract.length > 25) {
+        const articleUrl = page.content_urls?.desktop?.page || `https://en.wikipedia.org/wiki/${encodeURIComponent(page.title)}`;
+        return [{
+          title: page.title,
+          url: articleUrl,
+          domain: 'en.wikipedia.org',
+          snippet: page.extract,
+          passages: [page.extract],
+          content: page.extract
+        }];
+      }
+    }
+  } catch (e) {}
+  return null;
+}
+
+async function fetchLiveSearch(query) {
+  try {
+    const pipelineRes = await executeWebRetrievalPipeline(query);
+    if (pipelineRes && Array.isArray(pipelineRes.sources) && pipelineRes.sources.length > 0) {
+      return pipelineRes.sources;
+    }
+  } catch (err) {
+    console.warn("fetchLiveSearch failed:", err.message);
+  }
+  return [];
+}
+
+async function searchWeb(query, options = {}) {
+  let results = [];
+  const needsLiveLookup = isDynamicQuery(query);
+
+  // 1. Wikipedia lookup only if the query is not asking for live/versioned data
+  if (!needsLiveLookup && options.allowStaticWiki !== false) {
+    try {
+      results = await fetchWikiKnowledge(query);
+    } catch (err) {
+      console.warn("Wiki fetch failed, falling back to live search:", err.message);
+    }
+  }
+
+  // 2. Fall back to live web search (DuckDuckGo / search API) if wiki was skipped or empty
+  if (!results || results.length === 0) {
+    try {
+      results = await fetchLiveSearch(query);
+    } catch (err) {
+      console.warn("Live web search failed:", err.message);
+      results = [];
+    }
+  }
+
+  // 3. Return results array (empty array if nothing found, never throw a hard refusal here)
+  return Array.isArray(results) ? results : [];
+}
+
 module.exports = {
+    isDynamicQuery,
+    searchWeb,
+    fetchWikiKnowledge,
+    fetchLiveSearch,
     SOURCE_CATEGORIES,
     getSourceCategoryAndReliability,
     buildStructuredSourceRecord,

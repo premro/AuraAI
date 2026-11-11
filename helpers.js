@@ -34,7 +34,17 @@ const SYSTEM_PROMPT = `You are a helpful, accurate AI assistant. Follow these ru
 9. STYLE
 - Be concise and direct.`;
 
-const REWRITE_SYSTEM = `Rewrite the user's last message as a complete standalone request using the conversation. Fix typos and replace pronouns with the names they refer to. Output ONLY the rewritten text, nothing else. If it is already standalone, output it unchanged.`;
+const REWRITE_SYSTEM = `You are a search query optimizer. Given conversation history and the user's latest message:
+1. Expand ambiguous pronouns and conversational follow-ups into a complete standalone request search query.
+2. Silently correct typos in software names, brands, technologies, and technical terms (e.g., convert "crowdstike" to "CrowdStrike", "edr agent", etc.).
+3. Return ONLY the rewritten, spell-corrected standalone search query string without commentary.`;
+
+const FALLBACK_PROMPT = `You are an expert technical assistant.
+When web search returns no specific or matching external documents:
+1. Do NOT refuse or issue canned disclaimers like "I could not find a reliable source" for standard IT administration, silent install flags, command-line arguments, or common software configurations.
+2. If the user query contains obvious typos or misspelled vendor/product names (e.g., "crowdstike" -> "CrowdStrike"), silently correct them and answer the intent.
+3. Provide the standard, verified procedure or command-line syntax based on standard vendor documentation (e.g., standard Windows silent flags: /install /quiet /norestart CID=<your_cid>).
+4. Note gently that the command follows standard vendor deployment conventions and recommend verifying against their specific tenant or console version.`;
 
 const textOf = m => String((m && (m.content || m.displayText)) || '');
 const stripPrefix = t => String(t || '').replace(/^\s*(?:User Request|User|Prompt):\s*/i, '').trim();
@@ -73,4 +83,4 @@ function checkCode(reply, request) {
 
 const looksLikeCode = t => /\b(code|html|css|javascript|js|python|script|calculator|function|program|error|traceback|bug)\b/i.test(t);
 
-module.exports = { SYSTEM_PROMPT, REWRITE_SYSTEM, textOf, stripPrefix, norm, dropCurrentTurn, withAttachments, checkCode, looksLikeCode };
+module.exports = { FALLBACK_PROMPT, SYSTEM_PROMPT, REWRITE_SYSTEM, textOf, stripPrefix, norm, dropCurrentTurn, withAttachments, checkCode, looksLikeCode };
