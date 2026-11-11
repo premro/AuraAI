@@ -451,6 +451,11 @@ if __name__ == "__main__":
 const https = require('https');
 const querystring = require('querystring');
 const webRetrieval = require('./webRetrieval.js');
+const orchestrator = require('./orchestrator.js');
+const documentProcessor = require('./documentProcessor.js');
+const ragEngine = require('./ragEngine.js');
+const { MODEL_CATALOG, getModelMetadata } = require('./modelRegistry.js');
+const { log } = require('./logger.js');
 
 // Real-Time Live News Fetcher (Google News RSS - Zero API Key required)
 function fetchLiveNews(topic = '') {
@@ -2273,7 +2278,47 @@ function handleRequest(req, res) {
         return;
     }
 
-    // Instant & Online AI Chat Endpoint
+    // Document Parser Endpoint (PDF, DOCX, PPTX, XLSX, TXT)
+    if (pathname === '/api/parse-document' && req.method === 'POST') {
+        readRequestBody(req).then(async (parsed) => {
+            try {
+                const filename = parsed.filename || 'document.txt';
+                const ext = filename.split('.').pop().toLowerCase();
+                let docResult = null;
+
+                if (parsed.base64) {
+                    const buffer = Buffer.from(parsed.base64, 'base64');
+                    if (ext === 'docx') {
+                        docResult = documentProcessor.parseDocx(buffer, filename);
+                    } else if (ext === 'pptx') {
+                        docResult = documentProcessor.parsePptx(buffer, filename);
+                    }
+                }
+
+                if (!docResult) {
+                    docResult = documentProcessor.parseStructuredText(parsed.text || '', filename, ext);
+                }
+
+                ragEngine.registerDocument(docResult, parsed.conversationId || 'default');
+
+                res.writeHead(200, { 'Content-Type': 'application/json; charset=utf-8' });
+                res.end(JSON.stringify({
+                    success: true,
+                    docId: docResult.id,
+                    filename: docResult.filename,
+                    totalPages: docResult.totalPages,
+                    sectionsCount: docResult.sections.length,
+                    summary: documentProcessor.summarizeDocumentLocally(docResult, 'executive')
+                }));
+            } catch (err) {
+                res.writeHead(500, { 'Content-Type': 'application/json' });
+                res.end(JSON.stringify({ success: false, error: err.message }));
+            }
+        });
+        return;
+    }
+
+    // Instant & Online AI Chat Endpoint (via AuraAI Central Request Orchestrator)
     if (pathname === '/api/instant-chat' && req.method === 'POST') {
         readRequestBody(req).then(async (parsed) => {
             try {
@@ -2283,36 +2328,30 @@ function handleRequest(req, res) {
                     apiKey: parsed.apiKey || '',
                     model: parsed.model || 'gpt-4o-mini',
                     temperature: parsed.temperature || 0.7,
-                    webSearch: parsed.webSearch !== false,
+                    webSearch: parsed.webSearch === true,
                     webSources: parsed.webSources || [],
-                    webContext: parsed.webContext || ''
+                    webContext: parsed.webContext || '',
+                    systemPrompt: parsed.systemPrompt || ''
                 };
-                
-                const result = await generateSmartResponse(lastUserMessage, messages, userConfig);
-                let responseText = '';
-                let provider = 'AuraAI Engine';
-                let verifiedOnline = false;
-                let usedModel = userConfig.model;
 
-                if (typeof result === 'string') {
-                    responseText = result;
-                    if (result.includes('Real-Time News Briefing') || result.includes('Real-Time Global Headlines')) {
-                        provider = 'Google News & Wikipedia';
-                        verifiedOnline = true;
-                    }
-                } else if (result && typeof result === 'object') {
-                    responseText = result.text || result.response || '';
-                    provider = result.provider || 'Online AI';
-                    verifiedOnline = !!result.verifiedOnline;
-                    usedModel = result.model || usedModel;
-                }
-                
+                const result = await orchestrator.orchestrateRequest({
+                    prompt: lastUserMessage,
+                    history: messages,
+                    attachments: parsed.attachments || [],
+                    userConfig: userConfig,
+                    conversationId: parsed.conversationId || 'default',
+                    callGeminiAPI: callGeminiAPI,
+                    callOpenAIAPI: callOpenAIAPI,
+                    generateSmartResponseFallback: generateSmartResponse
+                });
+
                 res.writeHead(200, { 'Content-Type': 'application/json; charset=utf-8' });
                 res.end(JSON.stringify({ 
-                    response: responseText,
-                    provider: provider,
-                    verifiedOnline: verifiedOnline,
-                    model: usedModel
+                    response: result.response,
+                    provider: result.provider || 'AuraAI Engine',
+                    verifiedOnline: !!result.verifiedOnline,
+                    model: result.model || userConfig.model,
+                    capability: result.capability
                 }));
             } catch (err) {
                 res.writeHead(500, { 'Content-Type': 'application/json' });

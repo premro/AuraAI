@@ -532,6 +532,31 @@ async function processFiles(fileList) {
                 content = await extractPdfText(file);
             } else if (['xlsx', 'xls'].includes(ext)) {
                 content = await extractExcelText(file);
+            } else if (['docx', 'pptx'].includes(ext)) {
+                try {
+                    const arrayBuffer = await file.arrayBuffer();
+                    const bytes = new Uint8Array(arrayBuffer);
+                    let binary = '';
+                    for (let i = 0; i < bytes.byteLength; i++) {
+                        binary += String.fromCharCode(bytes[i]);
+                    }
+                    const base64 = btoa(binary);
+                    const parseRes = await fetch('/api/parse-document', {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({
+                            filename: file.name,
+                            base64: base64,
+                            conversationId: state.activeChatId
+                        })
+                    });
+                    if (parseRes.ok) {
+                        const parsedData = await parseRes.json();
+                        content = `[ATTACHED DOCUMENT: ${file.name} (${parsedData.totalPages} pages/sections)]\n\n${parsedData.summary}\n`;
+                    }
+                } catch (pe) {
+                    content = `[Document: ${file.name}]`;
+                }
             } else if (['png', 'jpg', 'jpeg', 'webp', 'gif', 'bmp', 'heic', 'heif', 'tiff', 'tif', 'avif', 'svg', 'ico'].includes(ext) || file.type.startsWith('image/')) {
                 const imgResult = await processImageFile(file);
                 content = imgResult.content;
@@ -672,6 +697,22 @@ function isImageGenerationPrompt(text) {
         let subject = match[1].trim().replace(/[.?!]+$/, '');
         if (subject.length > 2) return subject;
     }
+
+    // Follow-up image edit detection: "make it darker and add rain"
+    const isEditFollowUp = /^(?:make it|add|change it to|turn it into|darker|brighter|more realistic|in the style of)s+(.+)/i.test(p);
+    if (isEditFollowUp) {
+        const activeChat = state.chats?.find(c => c.id === state.activeChatId);
+        if (activeChat && activeChat.messages) {
+            const lastImageMsg = [...activeChat.messages].reverse().find(m => (m.content || '').includes('🎨 Generated Image:'));
+            if (lastImageMsg) {
+                const subjectMatch = lastImageMsg.content.match(/\*([^*]+)\*/);
+                if (subjectMatch) {
+                    return `${subjectMatch[1]}, ${p}`;
+                }
+            }
+        }
+    }
+
     return null;
 }
 
@@ -796,7 +837,20 @@ async function sendMessage() {
                 }
             }
 
-            // Direct AI Chat to /api/instant-chat (100% Private, Zero External Popups, No Third-Party Sign-In)
+            // Update transparent processing status
+            const hasAttachments = currentAttachments && currentAttachments.length > 0;
+            const hasDirectUrl = /https?:\/\/[^\s]+/i.test(text);
+            const isDoc = hasAttachments && currentAttachments.some(a => a.type?.includes('pdf') || a.name?.match(/\.(pdf|docx|xlsx|txt|csv|pptx)$/i));
+            const isImg = hasAttachments && currentAttachments.some(a => a.type?.startsWith('image/') || a.dataUrl);
+
+            let statusMsg = 'Thinking...';
+            if (hasDirectUrl) statusMsg = 'Reading webpage content...';
+            else if (isDoc) statusMsg = 'Processing document & indexing passages...';
+            else if (isImg) statusMsg = 'Analyzing visual content...';
+            else if (state.webSearch) statusMsg = 'Searching live web & verifying sources...';
+            updateMessageContent(assistantBubble, `*${statusMsg}*`, true);
+
+            // Direct AI Chat to /api/instant-chat via Central Orchestrator
             if (!state.abortController?.signal?.aborted) {
                 const response = await fetch('/api/instant-chat', {
                     method: 'POST',
@@ -804,11 +858,14 @@ async function sendMessage() {
                     signal: state.abortController.signal,
                     body: JSON.stringify({
                         messages: currentChat.messages,
+                        attachments: currentAttachments,
+                        conversationId: currentChat.id,
                         model: state.selectedModel,
                         temperature: state.temperature,
                         webSearch: state.webSearch,
                         webSources: liveWebSources,
                         webContext: liveWebContext,
+                        systemPrompt: state.systemPrompt,
                         apiKey: state.apiKey || localStorage.getItem('localai_api_key') || ''
                     })
                 });

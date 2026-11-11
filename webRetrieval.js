@@ -28,6 +28,9 @@ const http = require('http');
 const zlib = require('zlib');
 const querystring = require('querystring');
 const { URL } = require('url');
+const { validateUrlSafety } = require('./security');
+const CapabilityCache = require('./cache');
+const { log } = require('./logger');
 
 // 1. URL Detection & Extraction
 const URL_REGEX = /https?:\/\/[^\s<>"'()]+(?:\([^\s<>"'()]+\)|[^\s<>"'()!.,;:?])/gi;
@@ -490,12 +493,24 @@ function extractTextFromPdf(buffer) {
 
 // Fetch Full Web Page or Document via HTTP/HTTPS with redirect follow
 function fetchUrlContent(targetUrl, maxRedirects = 4, timeoutMs = 5000) {
+    const cached = CapabilityCache.webCache.get(targetUrl);
+    if (cached) {
+        log('PAGE FETCH', `Returning cached page for ${targetUrl}`);
+        return Promise.resolve(cached);
+    }
+
     return new Promise((resolve) => {
         let currentUrl = targetUrl;
         let redirectCount = 0;
 
-        function doFetch(urlStr) {
+        async function doFetch(urlStr) {
             try {
+                const safety = await validateUrlSafety(urlStr);
+                if (!safety.isSafe) {
+                    log('SECURITY CHECK', `Blocked unsafe URL in fetchUrlContent: ${urlStr} (${safety.reason})`);
+                    return resolve({ success: false, url: urlStr, error: 'Security policy blocked URL: ' + safety.reason });
+                }
+
                 const parsed = new URL(urlStr);
                 const protocol = parsed.protocol === 'https:' ? https : http;
 
