@@ -1,4 +1,5 @@
 'use strict';
+
 const { CAPABILITIES, analyzeRequest } = require('./router');
 const H = require('./helpers');
 const { searchWeb, isDynamicQuery } = require('./webRetrieval');
@@ -16,28 +17,42 @@ function normalizeTechTypos(text) {
   t = t.replace(/\bcrowsdtrike\b/gi, 'CrowdStrike');
   t = t.replace(/\bcalculatot\b/gi, 'calculator');
   t = t.replace(/\bendpoint\s*center\b/gi, 'Endpoint Central');
+  t = t.replace(/\bbroyani\b/gi, 'biryani');
+  t = t.replace(/\bwin\s*12\b/gi, 'Windows 12');
   return t;
 }
 
-async function orchestrateRequest({
-  prompt, history = [], attachments = [], userConfig = {}, conversationId = 'default',
-  callGeminiAPI, callOpenAIAPI, webSearch, generateBuiltInSmartKnowledge, generateSmartResponseFallback
-}) {
-  const smartFallback = generateBuiltInSmartKnowledge || generateSmartResponseFallback;
-  const rawPrompt = H.stripPrefix(prompt);
-  const apiKey = (userConfig.apiKey || process.env.GEMINI_API_KEY || process.env.OPENAI_API_KEY || '').trim();
-  const provider = pickProvider(apiKey);
-  // Default model must match the provider (a gpt-* name sent to Gemini fails silently)
-  const model = userConfig.model ||
-    (provider === 'gemini' ? (process.env.DEFAULT_GEMINI_MODEL || 'gemini-2.5-flash') : 'gpt-4o-mini');
-  const debug = { conversationId, provider, model, keyPresent: !!apiKey };
+/**
+ * Single Standardized Pipeline:
+ * Rewrite -> Optional Search -> Call LLM -> Return Response
+ */
+async function handleChatRequest(options) {
+  const rawPrompt = H.stripPrefix(options.userPrompt || options.prompt || '');
+  const attachments = options.attachments || [];
+  const history = options.history || [];
+  const userConfig = options.userConfig || {};
+  const conversationId = options.conversationId || 'default';
 
+  const apiKey = (options.apiKey || userConfig.apiKey || process.env.GEMINI_API_KEY || process.env.OPENAI_API_KEY || '').trim();
+  const provider = options.provider || pickProvider(apiKey);
+  const model = options.model || userConfig.model ||
+    (provider === 'gemini' ? (process.env.DEFAULT_GEMINI_MODEL || 'gemini-2.5-flash') : 'gpt-4o-mini');
+
+  const debug = { conversationId, provider, model, keyPresent: !!apiKey };
   const prior = H.dropCurrentTurn(history, rawPrompt);
 
-  async function callModel(system, text, hist) {
+  // Model caller adapter
+  async function callModel(system, text, hist = []) {
+    if (typeof options.callModelFn === 'function') {
+      return await options.callModelFn({ systemPrompt: system, prompt: text, model, history: hist });
+    }
     try {
-      if (provider === 'gemini' && callGeminiAPI) return await callGeminiAPI(apiKey, text, hist, model, system);
-      if (provider === 'openai' && callOpenAIAPI) return await callOpenAIAPI(apiKey, text, hist, model, system);
+      if (provider === 'gemini' && options.callGeminiAPI) {
+        return await options.callGeminiAPI(apiKey, text, hist, model, system);
+      }
+      if (provider === 'openai' && options.callOpenAIAPI) {
+        return await options.callOpenAIAPI(apiKey, text, hist, model, system);
+      }
     } catch (e) {
       console.error('[orchestrator] model call failed:', e && e.message);
       debug.error = e && e.message;
@@ -45,171 +60,150 @@ async function orchestrateRequest({
     return null;
   }
 
-  // 1. Repeat detection (informational only, never a canned reply)
-  const lastUser = [...prior].reverse().find(m => m.role === 'user');
-  const repeated = !!lastUser && H.norm(H.textOf(lastUser)) === H.norm(rawPrompt) && H.norm(rawPrompt).length > 3;
-
-  // 2. Rewrite short follow-ups into standalone requests & fix typos (e.g. "crowdstike")
+  // 1. Context-aware query resolution & typo normalization
   let userText = H.withAttachments(rawPrompt, attachments);
   userText = normalizeTechTypos(userText);
-  let rewritten = false;
+  let searchQuery = userText;
 
-  if (prior.length && rawPrompt.length < 120 && !attachments.length) {
+  if (prior.length > 0 && rawPrompt.length < 120 && !attachments.length) {
     if (provider) {
-      const r = await callModel(H.REWRITE_SYSTEM, userText, prior.slice(-6));
-      if (r && r.trim() && r.length < 300) { userText = normalizeTechTypos(r.trim()); rewritten = true; }
+      try {
+        const resolved = await callModel(
+          H.REWRITE_SYSTEM,
+          userText,
+          prior.slice(-4)
+        );
+        if (resolved && resolved.trim() && resolved.length < 300) {
+          userText = normalizeTechTypos(resolved.trim());
+          searchQuery = userText;
+        }
+      } catch (e) {
+        searchQuery = userText;
+      }
     } else {
       // Local context resolution when no external LLM is configured
       const priorText = prior.map(m => m.content || '').join(' ');
       const ecMatch = priorText.match(/\b(endpoint\s*centr[ae]?l|desktop\s*centr[ae]?l|dcagent)\b/i);
       if (ecMatch && /\b(gpo|push|agent|install|silent|powershell|deploy|uninstall|upgrade|update)\b/i.test(userText) && !ecMatch[0].toLowerCase().includes(userText.toLowerCase())) {
-        userText = `${userText} ${ecMatch[0]} agent`;
-        rewritten = true;
+        searchQuery = `${userText} ${ecMatch[0]} agent`;
+        userText = searchQuery;
       }
       if (/calculator|calculatot|compute/i.test(priorText) && /\b(error|bug|enter|fix|wrong|broken|fails|not working|=|crash)\b/i.test(userText)) {
         userText = `Fix error in calculator code: ${userText}`;
-        rewritten = true;
+        searchQuery = userText;
       }
     }
   }
 
-  // 3. Route on the standalone text
+  // 2. Retrieval (if enabled)
   const route = analyzeRequest(userText, prior, attachments);
   debug.capability = route.capability;
+  const isCode = route.capability === CAPABILITIES.CODE_GENERATION || H.looksLikeCode(userText);
+  const webSearchEnabled = options.webSearchEnabled !== false && userConfig.webSearch !== false && !isCode;
 
-  // 4. Retrieval flow with dynamic version detection & Wikipedia bypass
-  let system = H.SYSTEM_PROMPT;
-  let searchResults = null;
-  let activeWebSearch = webSearch;
-
-  const isDynamic = isDynamicQuery(userText);
-  debug.isDynamicQuery = isDynamic;
-
-  if (!activeWebSearch) {
-    activeWebSearch = async (q) => {
-      const items = await searchWeb(q, { allowStaticWiki: !isDynamic });
-      if (Array.isArray(items) && items.length > 0) {
-        return items.map((s, idx) => {
-          const pass = Array.isArray(s.passages) ? s.passages.join('\n') : (s.snippet || s.content || '');
-          return `[Source ${idx + 1} (${s.domain || 'web'})]: ${s.title || ''}\nLink: ${s.url || ''}\n${pass}`;
-        }).join('\n\n');
-      }
-      return null;
-    };
-  }
-
-  if (route.capability === CAPABILITIES.WEB_RESEARCH || isDynamic || /\b(silent|install|flags|powershell|cmd|version)\b/i.test(userText)) {
+  let searchContext = [];
+  if (webSearchEnabled) {
     try {
-      searchResults = await activeWebSearch(userText);
-      if (searchResults && searchResults.trim().length > 0) {
-        system += `\n\nSEARCH RESULTS for "${userText}":\n${searchResults}\nUse these for current facts and say if they do not contain the answer.`;
+      if (typeof options.webSearch === 'function') {
+        const customRes = await options.webSearch(searchQuery);
+        if (typeof customRes === 'string' && customRes.trim()) {
+          searchContext = [{ title: 'Web Search', snippet: customRes.trim(), url: '' }];
+        } else if (Array.isArray(customRes)) {
+          searchContext = customRes;
+        }
       } else {
-        // Retrieval returned 0 documents: inject FALLBACK_PROMPT instead of hard refusing
-        system += `\n\n${H.FALLBACK_PROMPT}`;
-        debug.fallbackPromptInjected = true;
+        searchContext = await searchWeb(searchQuery);
       }
-    } catch (e) {
-      debug.searchError = e.message;
-      system += `\n\n${H.FALLBACK_PROMPT}`;
+    } catch (err) {
+      console.warn('Web search retrieval failed, proceeding with model knowledge:', err.message);
+      searchContext = [];
     }
   }
 
-  if (repeated) system += '\n\nThe user repeated their previous message. Do not repeat your earlier answer word for word. Improve it, or ask what they want changed.';
+  // 3. Build dynamic prompt for the LLM
+  let fullPrompt = userText;
+  let systemPrompt = H.SYSTEM_PROMPT;
 
-  // 5. Answer with the real model
-  let reply = await callModel(system, userText, prior);
+  if (searchContext && searchContext.length > 0) {
+    const contextText = searchContext
+      .map((c, i) => `[Source ${i + 1}]: ${c.title || 'Web Result'}\n${c.snippet || ''}\nURL: ${c.url || ''}`)
+      .join('\n\n');
+    fullPrompt = `Search Context:\n${contextText}\n\nUser Question:\n${userText}`;
+  }
 
-  // 6. Validate code. If wrong, retry the model with the problem (never swap in canned content)
-  if (reply) {
-    const problem = H.checkCode(reply, userText);
+  // 4. Always let the LLM generate the final output
+  let aiResponse = await callModel(systemPrompt, fullPrompt, prior);
+
+  // 5. Code validation retry (retry model with issue, never swap in canned content)
+  if (aiResponse) {
+    const problem = H.checkCode(aiResponse, userText);
     if (problem) {
-      const retry = await callModel(system + '\n\n' + problem, userText, prior);
-      if (retry) reply = retry;
+      const retry = await callModel(systemPrompt + '\n\n' + problem, fullPrompt, prior);
+      if (retry) aiResponse = retry;
       debug.codeRetry = true;
     }
   }
 
-  // 7. Fallbacks: intelligent built-in knowledge & code engine when no cloud key is configured
-  if (!reply) {
+  // 6. Intelligent local knowledge fallback when no external LLM is reachable
+  const smartFallback = options.generateBuiltInSmartKnowledge || options.generateSmartResponseFallback;
+  if (!aiResponse) {
     if (typeof smartFallback === 'function' && !userConfig.strictModelOnly) {
       const b = await smartFallback(userText, prior, { conversationId, apiKey, model });
       if (b && typeof b === 'string' && b.trim()) {
-        return { response: b.trim(), provider: 'Built-in knowledge', model, capability: route.capability, verifiedOnline: true, debug };
+        return {
+          response: b.trim(),
+          provider: 'Built-in knowledge',
+          model,
+          capability: route.capability,
+          verifiedOnline: searchContext.length > 0,
+          sources: searchContext.map(s => ({ title: s.title, url: s.url })),
+          debug
+        };
       }
     }
-    if (searchResults && !userConfig.strictModelOnly) {
-      return { response: searchResults, provider: 'Web Search Grounding', model, capability: route.capability, verifiedOnline: true, debug };
+    if (searchContext && searchContext.length > 0 && !userConfig.strictModelOnly) {
+      const formatted = searchContext.map((s, idx) => `[Source ${idx + 1}]: ${s.title}\n${s.snippet}\n${s.url}`).join('\n\n');
+      return {
+        response: formatted,
+        provider: 'Web Search Grounding',
+        model,
+        capability: route.capability,
+        verifiedOnline: true,
+        sources: searchContext.map(s => ({ title: s.title, url: s.url })),
+        debug
+      };
     }
     const why = !apiKey ? 'no API key is configured'
       : !provider ? 'the API key format is not recognised'
       : 'the model request failed' + (debug.error ? ` (${debug.error})` : '');
     return {
       response: `I can't answer this right now because I couldn't reach an AI model: ${why}. Please check the API key and model name in settings.`,
-      provider: 'none', model, capability: route.capability, debug
+      provider: 'none',
+      model,
+      capability: route.capability,
+      sources: [],
+      debug
     };
   }
 
   const label = provider === 'gemini' ? 'Google Gemini' : 'Frontier AI';
-  return { response: reply, provider: label, model, capability: route.capability, verifiedOnline: !!searchResults, debug };
+  return {
+    response: aiResponse,
+    provider: label,
+    model,
+    capability: route.capability,
+    verifiedOnline: searchContext.length > 0,
+    sources: searchContext.map(s => ({ title: s.title, url: s.url })),
+    debug
+  };
 }
 
-// Unified chat handler adhering to handleChatRequest signature
-async function handleChatRequest(options) {
-  // If invoked with server.js pipeline options (callGeminiAPI, callOpenAIAPI, generateSmartResponseFallback, userConfig, etc.)
-  if (options.callGeminiAPI || options.callOpenAIAPI || options.generateSmartResponseFallback || options.userConfig || options.attachments) {
-    return await orchestrateRequest(options);
-  }
-
-  // Standalone RAG execution flow
-  const userPrompt = options.userPrompt || options.prompt || '';
-  const history = options.history || [];
-  const model = options.model || 'gpt-4o-mini';
-  const provider = options.provider || pickProvider(options.apiKey || '');
-  const callModel = options.callModelFn || (async () => null);
-
-  // 1. Rewrite and normalize spelling (e.g., "crowdstike" -> "CrowdStrike")
-  let searchQuery = normalizeTechTypos(userPrompt);
-  try {
-    const rewritten = await callModel({
-      systemPrompt: H.REWRITE_SYSTEM,
-      prompt: `History:\n${JSON.stringify(history)}\n\nCurrent message: ${userPrompt}`
-    });
-    if (rewritten && rewritten.trim()) {
-      searchQuery = normalizeTechTypos(rewritten.trim());
-    }
-  } catch (e) {
-    console.warn("Query rewrite failed, using original prompt:", e.message);
-  }
-
-  // 2. Perform retrieval with wiki bypass for version queries
-  const isDynamic = isDynamicQuery(searchQuery);
-  const searchResults = await searchWeb(searchQuery, {
-    allowStaticWiki: !isDynamic
-  });
-
-  // 3. Build prompt payload based on search outcome
-  let finalSystemPrompt = H.SYSTEM_PROMPT;
-  let finalUserPrompt = userPrompt;
-
-  if (searchResults && searchResults.length > 0) {
-    finalUserPrompt = `Context Sources:\n${JSON.stringify(searchResults)}\n\nUser Question: ${userPrompt}`;
-  } else {
-    // Retrieval yielded no hits: Use fallback instructions instead of refusing
-    finalSystemPrompt = `${H.SYSTEM_PROMPT}\n\n${H.FALLBACK_PROMPT}`;
-    finalUserPrompt = userPrompt;
-  }
-
-  // 4. Generate response via model
-  return await callModel({
-    systemPrompt: finalSystemPrompt,
-    prompt: finalUserPrompt,
-    model: model
-  });
-}
+// orchestrateRequest is aliased directly to handleChatRequest for unified pipeline consistency
+const orchestrateRequest = handleChatRequest;
 
 module.exports = {
-  orchestrateRequest,
   handleChatRequest,
+  orchestrateRequest,
   pickProvider,
   normalizeTechTypos
 };

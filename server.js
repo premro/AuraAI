@@ -1083,29 +1083,7 @@ async function fetchWikiKnowledge(query) {
             const page = await sumRes.json();
             if (page.extract && page.extract.length > 25) {
                 const articleUrl = page.content_urls?.desktop?.page || `https://en.wikipedia.org/wiki/${encodeURIComponent(page.title)}`;
-                const paragraphs = page.extract.split("\n").filter(p => p.trim());
-                const firstPara = paragraphs[0] || page.extract;
-                const remainingText = paragraphs.slice(1).join("\n\n").trim();
-                let detailsText = "";
-                if (page.description) {
-                    detailsText += `**Topic Overview**: ${page.description}\n\n`;
-                }
-                if (remainingText) {
-                    detailsText += remainingText;
-                } else {
-                    const sentences = firstPara.split(/(?<=[.!?])\s+/).filter(s => s.trim().length > 10);
-                    if (sentences.length > 1) {
-                        detailsText += sentences.slice(1).map(s => `- ${s.trim()}`).join("\n");
-                    } else {
-                        detailsText += `Documented factual overview and reference data for **${page.title}**.`;
-                    }
-                }
-                return "## Answer\n" +
-                       firstPara + "\n\n" +
-                       "## Details\n" +
-                       detailsText + "\n\n" +
-                       "## Sources\n" +
-                       `- [${page.title} Reference](${articleUrl})`;
+                return `${page.extract.trim()}\n\n---\n*Source: [${page.title} Reference](${articleUrl})*`;
             }
         }
     } catch (e) {}
@@ -2511,34 +2489,21 @@ What would you like to work on?`;
                `*Tip: Adjust quantities and spices according to your personal taste and dietary preferences.*`;
     }
 
-    // 11. IT Administration & Software Deployment Procedure Guidance (Strictly IT only)
+    // 11. Technical & Administrative Inquiries (IT only)
     const isEnterpriseIT = /\b(install|silent|deploy|uninstall|configure|gpo|powershell|cmd|agent|service|server|linux|windows|macos|cli|package|driver|firmware|port|firewall|dns|sysadmin)\b/i.test(p);
     if (isEnterpriseIT && !p.includes('news')) {
         const topic = rawPrompt.replace(/\b(how to|how do i|steps to|guide for|please explain)\b/gi, '').trim();
         const title = topic || rawPrompt;
-        return '### 📋 Standard Procedure Guide: ' + title + '\n\n' +
-               'Here are the standard administrative and configuration steps for **' + title + '**:\n\n' +
-               '1. **Pre-requisites & Permissions**:\n' +
-               '   - Ensure administrative privileges (Elevated Command Prompt, PowerShell, or root/sudo access).\n' +
-               '   - Verify network connectivity, required firewall ports, and target environment compatibility.\n\n' +
-               '2. **Deployment & Execution**:\n' +
-               '   - Execute the installation or configuration command using standard quiet/unattended parameters.\n' +
-               '   - If deploying via centralized management (GPO, MDM, or RMM), verify installer packaging and deployment policies.\n\n' +
-               '3. **Validation & Verification**:\n' +
-               '   - Check service status in the local service manager (`services.msc` or `systemctl`).\n' +
-               '   - Review installation logs for exit code `0` (success) or reboot-pending flags.\n\n' +
-               '> **Note**: Procedure follows standard enterprise deployment conventions. Verify against your specific tenant, operating system version, or release notes for custom switches.\n';
+        return `To deploy or configure ${title}:\n\n` +
+               `1. Open an administrative terminal (Elevated Command Prompt, PowerShell, or sudo terminal).\n` +
+               `2. Run the installer or tool using standard unattended/silent parameters (such as /install /quiet /norestart).\n` +
+               `3. Check the local service manager or installation logs to verify that the service is running and completed successfully.`;
     }
 
-    // 12. General Knowledge & Conversational Fallback
-    const cleanTopic = rawPrompt.replace(/\b(how to|how do i|what is|can you explain|tell me about)\b/gi, '').trim();
-    return `### 💡 Overview & Practical Steps: ${cleanTopic || rawPrompt}\n\n` +
-           `Here is a helpful, practical guide regarding **${cleanTopic || rawPrompt}**:\n\n` +
-           `1. **Core Concept**: Identify the goal and gather any required materials or information.\n` +
-           `2. **Step-by-Step Approach**: Break the process down into clear, manageable steps and follow them in order.\n` +
-           `3. **Key Considerations**: Focus on best practices, common pitfalls to avoid, and consistent results.\n\n` +
-           `*Feel free to ask for more specific details, steps, or adaptations!*`;
+    // 12. General Knowledge & Direct Conversational Fallback
+    return `Regarding **${rawPrompt}**: You can proceed by outlining your specific requirements, gathering any necessary resources or prerequisites, and applying standard best practices. Let me know if you would like more specific details, steps, or custom recommendations!`;
 }
+
 
 function readRequestBody(req) {
     return new Promise((resolve) => {
