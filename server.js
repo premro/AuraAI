@@ -1059,7 +1059,15 @@ async function fetchWikiKnowledge(query) {
             const page = await sumRes.json();
             if (page.extract && page.extract.length > 25) {
                 const articleUrl = page.content_urls?.desktop?.page || `https://en.wikipedia.org/wiki/${encodeURIComponent(page.title)}`;
-                return `## 📚 ${page.title}\n\n${page.description ? `> *${page.description}*\n\n` : ''}${page.extract}\n\n---\n*Verified Knowledge Base • [Read full Wikipedia article](${articleUrl})*`;
+                const paragraphs = page.extract.split("\n").filter(p => p.trim());
+                const firstPara = paragraphs[0] || page.extract;
+                return "## Answer\n" +
+                       firstPara + "\n\n" +
+                       "## Details\n" +
+                       (page.description ? `**Summary**: ${page.description}\n\n` : "") +
+                       page.extract + "\n\n" +
+                       "## Sources\n" +
+                       `- [${page.title} Reference](${articleUrl})`;
             }
         }
     } catch (e) {}

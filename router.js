@@ -116,6 +116,10 @@ function interpretQuery(rawPrompt, history = [], conversationId = 'default') {
         entities.push('Gokul Santol');
     } else if (/thalapathy|vijay/i.test(prompt)) {
         entities.push('Thalapathy Vijay');
+    } else if (/elon\s+musk/i.test(prompt)) {
+        entities.push('Elon Musk');
+    } else if (/zoho/i.test(prompt)) {
+        entities.push('Zoho Corporation');
     } else if (/endpoint\s+central|desktop\s+central/i.test(prompt)) {
         entities.push('ManageEngine Endpoint Central');
     } else if (/skype/i.test(prompt)) {
@@ -138,6 +142,10 @@ function interpretQuery(rawPrompt, history = [], conversationId = 'default') {
             resolvedQuery = `Is ${activeEntity} a powder?`;
         } else if (/what\s+movies\s+has\s+he\s+acted\s+in|what\s+films\s+has\s+he\s+acted\s+in/i.test(p)) {
             resolvedQuery = `What movies has ${activeEntity} acted in?`;
+        } else if (/how\s+old\s+is\s+he\??/i.test(p)) {
+            resolvedQuery = `How old is ${activeEntity}?`;
+        } else if (/(?:what\s+about\s+his\s+companies|what\s+companies\s+does\s+he\s+own|what\s+companies|his\s+companies)/i.test(p)) {
+            resolvedQuery = `What companies does ${activeEntity} run?`;
         } else if (isPlatformFollowUp) {
             let plat = 'macOS';
             if (/windows/i.test(p)) plat = 'Windows';
@@ -224,7 +232,7 @@ function analyzeRequest(rawPrompt, history = [], attachments = [], userConfig = 
                               /^(?:what|how)\s+about\b/i.test(p) ||
                               /\b(?:for\s+this|for\s+it|about\s+it)\b/i.test(p);
 
-    if (candidateTopic && !isPronounFollowUp) {
+    if (candidateTopic && !interpretation.contextDependency && !isPronounFollowUp) {
         conversationState.setActiveTopic(conversationId, candidateTopic);
     }
 
