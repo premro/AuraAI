@@ -115,7 +115,8 @@ class RAGEngine {
     // Tokenize text for BM25 and term matching
     tokenize(text) {
         if (!text) return [];
-        return text.toLowerCase()
+        const safe = typeof text === 'string' ? text : String(text);
+        return safe.toLowerCase()
             .replace(/[^\w\s\.-]/g, ' ')
             .split(/\s+/)
             .filter(t => t.length > 1);

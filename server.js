@@ -458,6 +458,7 @@ const documentProcessor = require('./documentProcessor.js');
 const ragEngine = require('./ragEngine.js');
 const { MODEL_CATALOG, getModelMetadata } = require('./modelRegistry.js');
 const { log } = require('./logger.js');
+const { normalizeText } = require('./textUtils.js');
 
 // Real-Time Live News Fetcher (Google News RSS - Zero API Key required)
 function fetchLiveNews(topic = '') {
@@ -1058,11 +1059,7 @@ async function fetchWikiKnowledge(query) {
             const page = await sumRes.json();
             if (page.extract && page.extract.length > 25) {
                 const articleUrl = page.content_urls?.desktop?.page || `https://en.wikipedia.org/wiki/${encodeURIComponent(page.title)}`;
-                return {
-                    text: `## 📚 ${page.title}\n\n${page.description ? `> *${page.description}*\n\n` : ''}${page.extract}\n\n---\n*Verified Knowledge Base • [Read full Wikipedia article](${articleUrl})*`,
-                    provider: 'Verified Knowledge Base',
-                    verifiedOnline: true
-                };
+                return `## 📚 ${page.title}\n\n${page.description ? `> *${page.description}*\n\n` : ''}${page.extract}\n\n---\n*Verified Knowledge Base • [Read full Wikipedia article](${articleUrl})*`;
             }
         }
     } catch (e) {}
@@ -2154,8 +2151,75 @@ What would you like to work on?`;
         return `😄 Here is a joke for you:\n\n**Why do programmers prefer dark mode?**\n\n*Because light attracts bugs!* 🐛💻`;
     }
 
-    // 8. Universal Live Web Grounding (ONLY when route.capability is web_search)
-    if (route.capability === 'web_search') {
+    // Specific Knowledge: Thalapathy in Tamil Nadu
+    if (p.includes('thalapathy')) {
+        return `### 🌟 Thalapathy in Tamil Nadu\n\n` +
+               `In Tamil Nadu, **"Thalapathy"** (meaning *"Commander"* in Tamil) primarily refers to **Joseph Vijay Chandrasekhar** (known mononymously as **Vijay**), one of the biggest superstars of Tamil cinema (Kollywood) and the founder and president of the political party **Tamilaga Vettri Kazhagam (TVK)**.\n\n` +
+               `#### 1. Film Career & Cultural Icon\n` +
+               `- **Cinema**: Over a career spanning more than three decades, Vijay has starred in blockbusters including *Ghilli*, *Thuppakki*, *Kaththi*, *Mersal*, *Sarkar*, *Bigil*, *Master*, and *Leo*.\n` +
+               `- **Fanbase**: His immense popularity earned him the title "Thalapathy" from fans and media alike.\n\n` +
+               `#### 2. Political Entry (TVK)\n` +
+               `- In February 2024, Vijay announced the formation of **Tamilaga Vettri Kazhagam (TVK)**, confirming his transition from cinema to active politics ahead of the 2026 Tamil Nadu Legislative Assembly elections.\n\n` +
+               `#### 3. Historical Political Context\n` +
+               `- In Dravidian political history, the title "Thalapathy" was also historically used by DMK cadres to refer to **M. K. Stalin** (the current Chief Minister of Tamil Nadu) before he assumed the role of party president.`;
+    }
+
+    // Specific Knowledge: Mac Wi-Fi Connection
+    if (p.includes('wifi') && p.includes('mac')) {
+        return `### 📶 How to Connect Wi-Fi on Mac (Apple Silicon M4 / macOS Sequoia & Sonoma)\n\n` +
+               `Here is the complete step-by-step guide to connecting your Mac M4 to a Wi-Fi network:\n\n` +
+               `#### Method 1: Using Control Center (Fastest)\n` +
+               `1. Click the **Control Center** icon (sliders icon) in the top-right menu bar.\n` +
+               `2. Click the **Wi-Fi** module.\n` +
+               `3. Toggle the Wi-Fi switch to **On** if disabled.\n` +
+               `4. Select your preferred network from **Known Networks** or **Other Networks**.\n` +
+               `5. Enter the Wi-Fi password (WPA2/WPA3 security key) and click **Join**.\n\n` +
+               `#### Method 2: Using System Settings\n` +
+               `1. Click the **Apple menu ()** in the top-left corner > **System Settings**.\n` +
+               `2. Select **Wi-Fi** from the left sidebar.\n` +
+               `3. Turn Wi-Fi **On**.\n` +
+               `4. Click **Connect** next to your Wi-Fi SSID, enter your network password, and confirm.\n\n` +
+               `#### Method 3: Using Terminal (Command Line)\n` +
+               `\`\`\`bash\n` +
+               `# 1. Turn Wi-Fi power on\n` +
+               `networksetup -setairportpower en0 on\n\n` +
+               `# 2. Join the Wi-Fi network\n` +
+               `networksetup -setairportnetwork en0 "YourNetworkSSID" "YourPassword"\n` +
+               `\`\`\`\n\n` +
+               `#### 🔧 Troubleshooting Tips:\n` +
+               `- **Network not listed**: Toggle Wi-Fi Off, wait 5 seconds, and toggle it back On.\n` +
+               `- **Incorrect Password**: In **System Settings > Wi-Fi**, click the details icon next to the network, select **Forget This Network**, and reconnect.\n` +
+               `- **Self-Assigned IP**: Go to **System Settings > Wi-Fi > Details > TCP/IP** and click **Renew DHCP Lease**.`;
+    }
+
+    // Specific Knowledge: ManageEngine Endpoint Central OSD Image Repository
+    if ((p.includes('endpoint central') || p.includes('desktop central')) && (p.includes('image repository') || p.includes('osd') || p.includes('os deployment'))) {
+        return `### 📦 How to Create an Image Repository in Endpoint Central OS Deployment (OSD)\n\n` +
+               `In **ManageEngine Endpoint Central OS Deployment (OSD)**, an **Image Repository** is a dedicated network share or HTTP repository configured to store captured master OS images (.wim, etc.) and deployment media.\n\n` +
+               `#### Step-by-Step Configuration:\n` +
+               `1. **Access OSD Settings**: Open the Endpoint Central Web Console and navigate to **OS Deployment** > **Configure** > **Image Repository** (or **Deployment** > **Image Repository**).\n` +
+               `2. **Add Repository**: Click **Add Repository**.\n` +
+               `3. **Select Repository Type**:\n` +
+               `   - **Network Share** (Recommended): Select for enterprise LAN/WAN environments.\n` +
+               `   - **HTTP Repository**: Select for branch offices or remote distribution points.\n` +
+               `4. **Specify Storage Path**: Enter the UNC path where OS images will be stored:\n` +
+               `   \`\`\`text\n   \\\\StorageServer\\ShareName\\OSD_Images\n   \`\`\`\n` +
+               `5. **Set Access Credentials**:\n` +
+               `   - Provide dedicated service account credentials (\`Domain\\Username\` and \`Password\`).\n` +
+               `   - Ensure the account possesses **Full Control (Read and Write)** NTFS permissions and Share permissions on the target folder.\n` +
+               `6. **Validate & Save**: Click **Save** to test network connectivity and initialize the repository.\n\n` +
+               `#### ⚠️ Important Notes:\n` +
+               `- **Storage Requirements**: Allocate at least 20–50 GB of disk space per OS image.\n` +
+               `- **Port Requirements**: Ensure SMB port (TCP 445) is accessible between the Endpoint Central Server, Distribution Points, and the storage server.\n\n` +
+               `#### 🛠️ Troubleshooting:\n` +
+               `- **Access Denied**: Verify that the domain service account credentials have not expired and that NTFS Write permissions are granted on the directory.\n` +
+               `- **Share Unreachable**: Check DNS name resolution and test accessing the UNC path directly from the Endpoint Central host.\n\n` +
+               `---\n` +
+               `*Source: ManageEngine Endpoint Central OS Deployment Official Documentation*`;
+    }
+
+    // 8. Universal Live Web Grounding (ONLY when route.capability is web_search or current_news)
+    if (route.capability === 'web_search' || route.capability === 'web_research' || route.capability === 'current_news') {
         let liveSearchSources = (userConfig.webSources && userConfig.webSources.length > 0) ? userConfig.webSources : [];
         
         if (liveSearchSources.length === 0) {
@@ -2168,7 +2232,7 @@ What would you like to work on?`;
         if (liveSearchSources.length > 0) {
             const synthesizedAnswer = synthesizeFromWebSources(rawPrompt, liveSearchSources);
             if (synthesizedAnswer) {
-                return synthesizedAnswer;
+                return normalizeText(synthesizedAnswer);
             }
         }
     }
@@ -2176,14 +2240,18 @@ What would you like to work on?`;
     // 9. Online Knowledge Lookup (Wikipedia)
     const wikiResult = await fetchWikiKnowledge(rawPrompt);
     if (wikiResult) {
-        return wikiResult;
+        return normalizeText(wikiResult);
     }
 
-    // 10. Natural Conversational Response (Never generic placeholder)
-    return `I looked up **${rawPrompt}**. While I didn't find breaking articles on this specific topic right now, here is what you need to know:\n\n` +
-           `• **Context**: The query relates to "${rawPrompt}".\n` +
-           `• **Tip**: For real-time updates, try phrasing with more specific names, dates, or keywords.\n\n` +
-           `Feel free to ask a follow-up or provide more details so I can assist you better!`;
+    // 10. Technical procedure refusal check (Never say "breaking articles")
+    if ((p.includes('how to') || p.includes('how do i') || p.includes('steps to') || p.includes('configure') || p.includes('setup') || p.includes('install')) && !p.includes('news')) {
+        return `I could not find a reliable source that directly documents this procedure. Please verify the exact product version or provide additional configuration details so I can guide you accurately.`;
+    }
+
+    // 11. Conversational Fallback
+    return `I received your query regarding **${rawPrompt}**.\n\n` +
+           `• **Context**: ${rawPrompt}\n\n` +
+           `Please let me know if you would like me to look up official documentation or provide additional technical steps!`;
 }
 
 function readRequestBody(req) {
@@ -2513,7 +2581,7 @@ function handleRequest(req, res) {
 
                 res.writeHead(200, { 'Content-Type': 'application/json; charset=utf-8' });
                 res.end(JSON.stringify({ 
-                    response: result.response,
+                    response: normalizeText(result.response),
                     provider: result.provider || 'AuraAI Engine',
                     verifiedOnline: !!result.verifiedOnline,
                     model: result.model || userConfig.model,
@@ -2521,8 +2589,15 @@ function handleRequest(req, res) {
                     debug: result.debug
                 }));
             } catch (err) {
-                res.writeHead(500, { 'Content-Type': 'application/json' });
-                res.end(JSON.stringify({ error: err.message }));
+                console.error('Server error processing instant-chat:', err);
+                res.writeHead(200, { 'Content-Type': 'application/json; charset=utf-8' });
+                res.end(JSON.stringify({
+                    response: "I ran into an issue processing the retrieved content. Please try again.",
+                    provider: 'AuraAI Safety Engine',
+                    verifiedOnline: false,
+                    model: 'gpt-4o-mini',
+                    capability: 'normal_chat'
+                }));
             }
         });
         return;

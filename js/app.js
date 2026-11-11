@@ -865,9 +865,25 @@ async function sendMessage() {
                 }
 
                 const data = await response.json();
-                const targetText = data.response || "No response received.";
+                
+                // Defensive normalization to prevent targetText.split is not a function
+                function normalizeClientText(val) {
+                    if (typeof val === 'string') return val;
+                    if (val == null) return '';
+                    if (Array.isArray(val)) return val.map(normalizeClientText).filter(Boolean).join('\n');
+                    if (typeof val === 'object') {
+                        if (typeof val.text === 'string') return val.text;
+                        if (typeof val.content === 'string') return val.content;
+                        if (typeof val.response === 'string') return val.response;
+                        if (typeof val.message === 'string') return val.message;
+                        try { return JSON.stringify(val); } catch (_) { return String(val); }
+                    }
+                    return String(val);
+                }
 
-                const words = targetText.split(' ');
+                const rawResponse = data.response != null ? data.response : "No response received.";
+                const targetText = normalizeClientText(rawResponse);
+                const words = (typeof targetText === 'string' && targetText.length > 0) ? targetText.split(' ') : ['No', 'response', 'received.'];
                 for (let i = 0; i < words.length; i++) {
                     if (state.abortController.signal.aborted) break;
                     fullResponse += (i === 0 ? '' : ' ') + words[i];

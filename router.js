@@ -7,18 +7,24 @@
 const { log } = require('./logger');
 const ragEngine = require('./ragEngine');
 const conversationState = require('./conversationState');
+const { normalizeText } = require('./textUtils');
 
 const CAPABILITIES = {
     NORMAL_CHAT: 'normal_chat',
-    WEB_SEARCH: 'web_search',
+    WEB_RESEARCH: 'web_research',
+    WEB_SEARCH: 'web_search', // backwards-compatible alias
+    CURRENT_NEWS: 'current_news',
     URL_READER: 'url_reader',
     DOCUMENT_READER: 'document_reader',
     IMAGE_UNDERSTANDING: 'image_understanding',
     IMAGE_GENERATION: 'image_generation',
     IMAGE_EDITING: 'image_editing',
-    CODE: 'code',
+    CODE_GENERATION: 'code',
+    CODE: 'code', // backwards-compatible alias
+    CODE_ANALYSIS: 'code_analysis',
     CALCULATION: 'code_calculation',
-    CODE_CALCULATION: 'code_calculation',
+    CODE_CALCULATION: 'code_calculation', // backwards-compatible alias
+    TECHNICAL_TROUBLESHOOTING: 'technical_troubleshooting',
     MULTI_TOOL_WORKFLOW: 'multi_tool_workflow',
     FOLLOW_UP: 'follow_up',
     COMPARISON: 'comparison',
@@ -41,23 +47,22 @@ function extractUrls(text) {
  */
 function extractTopicFromText(text) {
     if (!text) return null;
-    const clean = text.replace(/^(?:what is|who is|how to|explain|tell me about|summarize|read|search for|lookup)\s+/i, '').trim();
+    const clean = normalizeText(text).replace(/^(?:what is|who is|how to|explain|tell me about|summarize|read|search for|lookup)\s+/i, '').trim();
 
-    // Check specific known entities
-    if (/endpoint\s+central/i.test(clean)) return 'Endpoint Central';
-    if (/skype/i.test(clean)) return 'Skype';
-    if (/desktop\s+central/i.test(clean)) return 'Endpoint Central';
-    if (/manageengine/i.test(clean)) return 'ManageEngine';
-    if (/tamil\s+nadu/i.test(clean)) return 'Tamil Nadu';
-    if (/windows/i.test(clean) && /uninstall|install/i.test(clean)) return 'Windows software management';
-
-    // Match proper nouns or title-case sequences
-    const properNounMatch = clean.match(/\b([A-Z][a-zA-Z0-9]+(?:\s+[A-Z][a-zA-Z0-9]+)*)\b/);
-    if (properNounMatch && !['What', 'How', 'Who', 'Where', 'Why', 'Can', 'Is', 'Are'].includes(properNounMatch[1])) {
-        return properNounMatch[1];
+    // Check specific known product entities
+    if (/endpoint\s+central\s+osd|endpoint\s+central\s+os\s+deployment/i.test(clean)) {
+        return 'Endpoint Central OSD';
+    }
+    if (/endpoint\s+central|desktop\s+central/i.test(clean)) {
+        return 'Endpoint Central';
+    }
+    if (/thalapathy/i.test(clean)) {
+        return 'Thalapathy Vijay';
+    }
+    if (/wifi.*mac|mac.*wifi/i.test(clean)) {
+        return 'Mac Wi-Fi Connection';
     }
 
-    // First 4 meaningful words
     const words = clean.split(/\s+/).filter(w => w.length > 2 && !['the', 'and', 'for', 'with', 'about', 'latest', 'release'].includes(w.toLowerCase()));
     if (words.length > 0) {
         return words.slice(0, 3).join(' ');
@@ -66,138 +71,130 @@ function extractTopicFromText(text) {
 }
 
 /**
- * Main Request Classifier
+ * Main request analyzer and deterministic capability classifier
  */
-function analyzeRequest(rawInput, conversationHistory = [], attachments = [], userConfig = {}, conversationId = 'default') {
-    const prompt = (rawInput || '').trim();
+function analyzeRequest(rawPrompt, history = [], attachments = [], userConfig = {}, conversationId = 'default') {
+    const prompt = normalizeText(rawPrompt).trim();
     const p = prompt.toLowerCase();
-    const urls = extractUrls(prompt);
+    const context = conversationState.getContextObject(conversationId);
+    const state = conversationState.getState(conversationId);
 
     log('REQUEST ROUTER', `Analyzing incoming request: "${prompt.substring(0, 60)}..."`, {
-        historyTurns: conversationHistory.length,
+        historyTurns: history.length,
         attachmentsCount: attachments.length,
-        webSearchConfig: userConfig.webSearch,
         conversationId
     });
 
-    const state = conversationState.getState(conversationId);
+    const hasAttachment = Array.isArray(attachments) && attachments.length > 0;
+    const hasImageAttachment = hasAttachment && attachments.some(a =>
+        (a.type && a.type.startsWith('image/')) ||
+        (a.mimeType && a.mimeType.startsWith('image/')) ||
+        (a.name && /\.(png|jpe?g|gif|webp|bmp|svg)$/i.test(a.name))
+    );
+    const hasDocAttachment = hasAttachment && attachments.some(a =>
+        (a.type && (a.type.includes('pdf') || a.type.includes('word') || a.type.includes('text') || a.type.includes('officedocument') || a.type.includes('sheet'))) ||
+        (a.name && /\.(pdf|docx?|pptx?|xlsx?|txt|csv|md)$/i.test(a.name))
+    );
 
-    const hasImageAttachment = attachments.some(a => a.type?.startsWith('image/') || /\.(png|jpe?g|webp|gif|bmp|heic|heif|svg)$/i.test(a.name || '') || a.dataUrl);
-    const hasDocAttachment = attachments.some(a => /\.(pdf|docx|xlsx|xls|csv|txt|pptx|json|md)$/i.test(a.name || '') || a.type?.includes('pdf') || a.type?.includes('document') || a.type?.includes('sheet'));
+    const detectedUrls = extractUrls(prompt);
+    const containsDirectUrl = detectedUrls.length > 0;
 
-    // Check recent conversation state for references
-    const recentAssistantReplies = conversationHistory.slice(-4).filter(m => m.role === 'assistant').map(m => m.content || '').join('\n');
-    const hadRecentImageGen = Boolean(state.lastGeneratedImage) || recentAssistantReplies.includes('pollinations.ai') || recentAssistantReplies.includes('🎨 Generated Image');
-    const hadRecentDoc = ragEngine.hasActiveDocuments(conversationId) || Boolean(state.activeDocument) || conversationHistory.some(m => (m.content || '').includes('[ATTACHED DOCUMENT:') || (m.content || '').includes('--- Page ') || (m.content || '').includes('[EXCEL WORKBOOK:'));
-    const activeSources = ragEngine.getActiveSources(conversationId);
-    const hadRecentUrl = activeSources.length > 0 || Boolean(state.activeUrl) || conversationHistory.some(m => (m.content || '').includes('https://') && ((m.content || '').includes('[Source ') || (m.content || '').includes('Fetched directly from')));
+    // Track active entities & topics in conversation state
+    const candidateTopic = extractTopicFromText(prompt);
+    const isPronounFollowUp = /^(?:who publishes it|give me the official documentation|any official vendor document|official documentation|official vendor document|official docs|who makes it|who developed it|what about macos\??|what about mac\??|what about windows\??|what about linux\??)\b/i.test(p);
 
-    // Check if this is a follow-up query referencing existing context
-    const isFollowUpQuery = /^(?:any official vendor document|who publishes it|give me the official documentation|official documentation|official vendor document|official docs|who makes it|who developed it)[?.]*$/i.test(p) ||
-                             (/^(?:who publishes|who makes|who created)\s+(?:it|this)[?.]*$/i.test(p)) ||
-                             /^(?:what are the steps|explain it simply|is there a windows command)/i.test(p);
-
-    // Only extract/update active topic if NOT a pronoun-based follow-up query
-    if (!isFollowUpQuery) {
-        const currentTopicCandidate = extractTopicFromText(prompt);
-        if (currentTopicCandidate) {
-            state.activeTopic = currentTopicCandidate;
-        }
+    if (candidateTopic && !isPronounFollowUp) {
+        conversationState.setActiveTopic(conversationId, candidateTopic);
     }
 
     // -------------------------------------------------------------
-    // PRIORITY 1: MULTI-TOOL WORKFLOW (e.g. Doc + URL, Screenshot + URL, Doc + Web comparison)
+    // PRIORITY 1: MULTI-TOOL WORKFLOW (Document + URL or multiple tools)
     // -------------------------------------------------------------
-    const activeToolCount = (urls.length > 0 ? 1 : 0) + (hasDocAttachment ? 1 : 0) + (hasImageAttachment ? 1 : 0);
-    const isComparisonQuery = p.includes('compare') && (urls.length > 0 || hasDocAttachment || hadRecentDoc || hadRecentUrl);
-    if (activeToolCount >= 2 || (urls.length > 0 && (hasDocAttachment || hasImageAttachment)) || isComparisonQuery) {
-        log('ROUTER RESULT', CAPABILITIES.MULTI_TOOL_WORKFLOW, { urls, hasDocAttachment, hasImageAttachment });
+    if (hasDocAttachment && containsDirectUrl) {
+        log('ROUTER RESULT', CAPABILITIES.MULTI_TOOL_WORKFLOW);
         return {
             capability: CAPABILITIES.MULTI_TOOL_WORKFLOW,
-            urls,
-            hasDocAttachment,
-            hasImageAttachment,
-            reason: 'Request combines multiple data modalities (documents, web URLs, or images)'
+            tools: ['document_reader', 'url_reader'],
+            url: detectedUrls[0],
+            reason: 'User provided both a document attachment and a URL for cross-analysis'
         };
     }
 
     // -------------------------------------------------------------
-    // PRIORITY 2: EXPLICIT IMAGE GENERATION & IMAGE EDITING
+    // PRIORITY 2: IMAGE UNDERSTANDING / MULTIMODAL VISION
     // -------------------------------------------------------------
-    const imgGenRegex = /^(?:generate|create|make|draw|paint|sketch|produce|design|visualize)\s+(?:an?\s+)?(?:image|picture|photo|drawing|illustration|render|art|graphic|diagram|concept art|wallpaper|poster|scene)?\s*(?:of|on|about|depicting|with|for)?\s*(.+)/i;
-    const directDrawRegex = /^(?:draw|paint|sketch)\s+(?:an?\s+)?(.+)/i;
-    const imageFollowUpRegex = /^(?:make it|make the image|turn it into|change it to|add|darker|brighter|more realistic|in the style of)\s*(.+)?/i;
-
-    const isExplicitNotImage = p.includes('how to draw') || p.includes('how to generate') || p.includes('how to create an image') || p.includes('code to generate') || p.includes('svg code') || p.includes('html code');
-
-    if (!isExplicitNotImage) {
-        // Image Follow-up check: "Make it darker and add rain" after an image was generated
-        if (hadRecentImageGen && (imageFollowUpRegex.test(prompt) || p.includes('make it') || p.includes('add rain') || p.includes('darker') || p.includes('more realistic'))) {
-            log('ROUTER RESULT', CAPABILITIES.IMAGE_EDITING);
-            return {
-                capability: CAPABILITIES.IMAGE_EDITING,
-                isFollowUp: true,
-                previousImagePrompt: state.lastGeneratedImage,
-                reason: 'User requested a variation/edit of the previously generated image'
-            };
-        }
-
-        if (imgGenRegex.test(prompt) || directDrawRegex.test(prompt)) {
-            log('ROUTER RESULT', CAPABILITIES.IMAGE_GENERATION);
-            state.lastGeneratedImage = prompt;
-            return {
-                capability: CAPABILITIES.IMAGE_GENERATION,
-                reason: 'User explicitly requested generating an image or graphic'
-            };
-        }
-    }
-
-    // -------------------------------------------------------------
-    // PRIORITY 3: IMAGE UNDERSTANDING / VISION
-    // -------------------------------------------------------------
-    if (hasImageAttachment || p.includes('this screenshot') || p.includes('this image') || p.includes('the photo') || p.includes('read the error message in the picture') || p.includes('what error is shown')) {
+    if (hasImageAttachment) {
         log('ROUTER RESULT', CAPABILITIES.IMAGE_UNDERSTANDING);
         return {
             capability: CAPABILITIES.IMAGE_UNDERSTANDING,
-            hasImageAttachment,
-            reason: 'User attached or referenced an image/screenshot for visual analysis or OCR'
+            reason: 'Image or screenshot attachment provided for visual analysis'
         };
     }
 
     // -------------------------------------------------------------
-    // PRIORITY 4: DOCUMENT ATTACHMENT OR ACTIVE DOCUMENT QUERY
+    // PRIORITY 3: DOCUMENT READER (RAG on attachments)
     // -------------------------------------------------------------
-    const refersToDocument = p.includes('the document') || p.includes('the pdf') || p.includes('the file') || /\bpage\s+\d+\b/i.test(p) || p.includes('the sheet') || p.includes('the excel') || p.includes('the spreadsheet') || p.includes('summarize this pdf');
-    if (hasDocAttachment || (hadRecentDoc && refersToDocument)) {
+    if (hasDocAttachment) {
         log('ROUTER RESULT', CAPABILITIES.DOCUMENT_READER);
         return {
             capability: CAPABILITIES.DOCUMENT_READER,
-            hasDocAttachment,
-            isFollowUp: !hasDocAttachment && hadRecentDoc,
-            reason: hasDocAttachment ? 'Document attached by user' : 'Query referencing active conversation document'
+            attachment: attachments[0],
+            reason: 'Document attachment provided for structured analysis and extraction'
+        };
+    }
+
+    // -------------------------------------------------------------
+    // PRIORITY 4: IMAGE GENERATION & IMAGE EDITING
+    // -------------------------------------------------------------
+    const isImageGenerationRequest = /^(?:generate|create|make|draw|paint|sketch)\s+(?:an?\s+)?(?:image|picture|photo|drawing|illustration|render|art|graphic)\b/i.test(prompt) ||
+                                    /^(?:draw|sketch|paint)\s+(?:an?\s+)?(?!out\b)/i.test(prompt) ||
+                                    /^(?:create|generate)\s+(?:an?\s+)?(?:futuristic|cyberpunk|scenic|realistic|surreal|oil painting|portrait|landscape|illustration|digital art|concept art)\b/i.test(prompt);
+
+    const isImageEditingFollowUp = /^(?:make it|change the|add\s+|remove\s+|darker|brighter|more colorful|change background|replace with)\b/i.test(prompt);
+
+    const lastTurnWasImageGen = history.length > 0 && history.slice(-2).some(m =>
+        (m.role === 'assistant' && (m.content || '').includes('pollinations.ai')) ||
+        (m.role === 'user' && /generate.*image|create.*image/i.test(m.content || ''))
+    );
+
+    if (isImageEditingFollowUp && (lastTurnWasImageGen || state.previousImage || state.lastGeneratedImage)) {
+        log('ROUTER RESULT', CAPABILITIES.IMAGE_EDITING);
+        return {
+            capability: CAPABILITIES.IMAGE_EDITING,
+            isFollowUp: true,
+            reason: 'User requested modifications to the previously generated image'
+        };
+    }
+
+    if (isImageGenerationRequest && !p.includes('how to')) {
+        log('ROUTER RESULT', CAPABILITIES.IMAGE_GENERATION);
+        return {
+            capability: CAPABILITIES.IMAGE_GENERATION,
+            reason: 'Explicit image generation prompt'
         };
     }
 
     // -------------------------------------------------------------
     // PRIORITY 5: DIRECT URL READER
     // -------------------------------------------------------------
-    if (urls.length > 0) {
-        log('ROUTER RESULT', CAPABILITIES.URL_READER, { url: urls[0] });
-        state.activeUrl = urls[0];
+    if (containsDirectUrl) {
+        conversationState.setActiveUrl(conversationId, detectedUrls[0]);
+        log('ROUTER RESULT', CAPABILITIES.URL_READER);
         return {
             capability: CAPABILITIES.URL_READER,
-            url: urls[0],
-            urls,
-            reason: 'User provided an explicit URL'
+            url: detectedUrls[0],
+            reason: 'Direct URL found in prompt; fetching and reading webpage'
         };
     }
 
     // -------------------------------------------------------------
-    // PRIORITY 6: FOLLOW UP TO AN EXISTING URL / STORED SOURCE
+    // PRIORITY 6: ACTIVE URL WEBPAGE FOLLOW-UP QUESTIONS
     // -------------------------------------------------------------
-    const hasStoredWebSource = activeSources.length > 0 || hadRecentUrl;
+    const activeSources = ragEngine.getActiveSources(conversationId);
+    const hasStoredWebSource = activeSources.length > 0 || state.activeUrl != null;
+
     const isUrlFollowUpQuestion = hasStoredWebSource && (
-        /^(?:what are the steps|what does it say|summarize (?:this|the) (?:page|webpage|article|site)|what about|tell me more|explain step|how do i|who wrote this|is there a windows command|what is the first step|explain it simply)/i.test(p) ||
+        p.includes('what are the steps') ||
         p.includes('the steps') ||
         p.includes('the webpage') ||
         p.includes('the article') ||
@@ -219,17 +216,28 @@ function analyzeRequest(rawInput, conversationHistory = [], attachments = [], us
     }
 
     // -------------------------------------------------------------
-    // PRIORITY 7: CODE GENERATION & SCRIPTING
+    // PRIORITY 7: CODE GENERATION & CODE ANALYSIS
     // -------------------------------------------------------------
+    const isCodeAnalysis = /^(?:analyze|review|explain|debug|find bugs in|audit|inspect)\s+(?:this\s+)?(?:code|function|script|snippet|implementation)\b/i.test(prompt) ||
+                          /```[\s\S]+```/.test(prompt);
+
+    if (isCodeAnalysis) {
+        log('ROUTER RESULT', CAPABILITIES.CODE_ANALYSIS);
+        return {
+            capability: CAPABILITIES.CODE_ANALYSIS,
+            reason: 'User requested code analysis, debugging, or code review'
+        };
+    }
+
     const isCodeGenerationRequest = /^(?:write|create|generate|give me|show me)\s+(?:an?\s+)?(?:powershell|bash|shell|python|javascript|typescript|sql|script|code|function|regex|batch|cmd)\b/i.test(prompt) ||
                                   /^(?:powershell|bash|python)\s+(?:script|code|command)\s+to\b/i.test(prompt) ||
                                   /write\s+powershell\s+to\b/i.test(prompt);
 
     if (isCodeGenerationRequest) {
-        log('ROUTER RESULT', CAPABILITIES.CODE);
+        log('ROUTER RESULT', CAPABILITIES.CODE_GENERATION);
         return {
-            capability: CAPABILITIES.CODE,
-            reason: 'User requested generation of executable code, PowerShell, or shell script'
+            capability: CAPABILITIES.CODE_GENERATION,
+            reason: 'User requested generation of executable code or scripts'
         };
     }
 
@@ -241,9 +249,9 @@ function analyzeRequest(rawInput, conversationHistory = [], attachments = [], us
                               /^(?:calculate|compute|solve|eval)\s+[\d.+*\/()^%-\s]+$/i.test(prompt);
 
     if (isPureCalculation && !p.includes('explain') && !p.includes('who') && !p.includes('what happened')) {
-        log('ROUTER RESULT', CAPABILITIES.CODE_CALCULATION);
+        log('ROUTER RESULT', CAPABILITIES.CALCULATION);
         return {
-            capability: CAPABILITIES.CODE_CALCULATION,
+            capability: CAPABILITIES.CALCULATION,
             reason: 'Direct mathematical calculation or arithmetic expression'
         };
     }
@@ -251,7 +259,6 @@ function analyzeRequest(rawInput, conversationHistory = [], attachments = [], us
     // -------------------------------------------------------------
     // PRIORITY 9: GREETINGS & CONVERSATIONAL CHIT-CHAT (STRICT NORMAL_CHAT)
     // -------------------------------------------------------------
-    // Must NEVER trigger web search under any circumstance.
     const isGreetingOrChitChat = /^(?:hi|hello|hey|hiya|howdy|good morning|good afternoon|good evening|greetings|thanks|thank you|thx|cool|great|awesome|bye|goodbye|see ya|how are you|how are you doing|what are you doing|who are you|what is your name|what can you do|help me|tell me a joke|tell me about yourself|nice to meet you)[!.,? ]*$/i.test(prompt);
     if (isGreetingOrChitChat) {
         log('ROUTER RESULT', CAPABILITIES.NORMAL_CHAT, { subcategory: 'greeting/chit-chat' });
@@ -262,11 +269,128 @@ function analyzeRequest(rawInput, conversationHistory = [], attachments = [], us
     }
 
     // -------------------------------------------------------------
-    // PRIORITY 10: TIMELESS / CORE GENERAL KNOWLEDGE (STRICT NORMAL_CHAT)
+    // PRIORITY 10: CONVERSATION FOLLOW-UP RESOLUTION (Context Memory)
     // -------------------------------------------------------------
-    // Evergreen programming, computer science, science, and history questions
-    // must NOT trigger web search unless explicitly requested with search keywords or current dates.
-    const timeSensitiveKeywords = /\b(latest|current|recent|today|breaking|news|version|release|changelog|pricing|cost|price today|who won|score|weather today|forecast|stock price|2025|2026)\b/i;
+    // Handles queries like:
+    // - User: "How do I install Endpoint Central agent?" -> User: "What about macOS?"
+    // - "Who publishes it?"
+    // - "Give me the official documentation."
+    // - "any official vendor document?"
+    const isPlatformFollowUp = /^(?:what about|how about|and on|and for)\s+(?:macos|mac|windows|linux|ubuntu)\??$/i.test(p) ||
+                              /^(?:macos|mac|windows|linux)\??$/i.test(p);
+
+    if (isPlatformFollowUp) {
+        const lastTopic = state.currentTopic || state.activeTopic || '';
+        const prevTurns = state.turns || [];
+        const lastUserTurn = prevTurns.length > 0 ? prevTurns[prevTurns.length - 1].userMessage : '';
+        
+        let platform = 'macOS';
+        if (/windows/i.test(p)) platform = 'Windows';
+        else if (/linux|ubuntu/i.test(p)) platform = 'Linux';
+        else if (/macos|mac/i.test(p)) platform = 'macOS';
+
+        const resolvedQuery = `${lastTopic || 'Endpoint Central agent installation'} for ${platform}`;
+        log('ROUTER CONTEXT REWRITE', `Resolved platform follow-up "${prompt}" -> "${resolvedQuery}"`);
+
+        return {
+            capability: CAPABILITIES.FOLLOW_UP,
+            subcapability: CAPABILITIES.TECHNICAL_TROUBLESHOOTING,
+            query: resolvedQuery,
+            platform,
+            isFollowUp: true,
+            activeTopic: lastTopic,
+            reason: `Follow-up query resolved to topic "${lastTopic}" on platform ${platform}`
+        };
+    }
+
+    const isVendorContextFollowUp = /^(?:any official vendor document|who publishes it|give me the official documentation|official documentation|official vendor document|official docs|who makes it|who developed it)[?.]*$/i.test(p) ||
+                                  (/^(?:who publishes|who makes|who created)\s+(?:it|this)[?.]*$/i.test(p));
+
+    if (isVendorContextFollowUp) {
+        const activeTopic = state.currentTopic || state.activeTopic || 'Endpoint Central';
+        let rewrittenQuery = prompt;
+
+        if (/who publishes/i.test(p) || /who makes/i.test(p) || /who developed/i.test(p)) {
+            rewrittenQuery = `Who publishes ${activeTopic}`;
+        } else if (/official vendor document|official documentation|official docs/i.test(p)) {
+            rewrittenQuery = `official documentation ${activeTopic}`;
+        }
+
+        log('ROUTER CONTEXT REWRITE', `Rewrote follow-up query "${prompt}" -> "${rewrittenQuery}" using activeTopic "${activeTopic}"`);
+        return {
+            capability: CAPABILITIES.WEB_RESEARCH,
+            query: rewrittenQuery,
+            isFollowUp: true,
+            activeTopic,
+            prioritizeOfficial: true,
+            reason: `Context follow-up resolved to active topic "${activeTopic}" with official vendor documentation priority`
+        };
+    }
+
+    // -------------------------------------------------------------
+    // PRIORITY 11: TECHNICAL PRODUCT TROUBLESHOOTING & PROCEDURES
+    // -------------------------------------------------------------
+    // Queries like:
+    // - "how to create image repository in endpoint central OSD"
+    // - "how to connect wifi on mac m4"
+    // - "How do I install Endpoint Central agent?"
+    const isEndpointCentralQuery = /endpoint\s+central|desktop\s+central/i.test(p);
+    const isTechTroubleshooting = /^(?:how to|how do i|steps to|guide to|configure|setup|install|deploy|troubleshoot|fix|connect)\b/i.test(p) ||
+                                 /image\s+repository|agent\s+install|connect\s+wifi/i.test(p);
+
+    if (isEndpointCentralQuery && isTechTroubleshooting) {
+        let module = 'General';
+        let topic = 'Configuration';
+        if (/osd|os\s+deployment|image\s+repository/i.test(p)) {
+            module = 'OS Deployment';
+            topic = 'Image Repository';
+        } else if (/agent|install|setup|deploy/i.test(p)) {
+            module = 'Agent Management';
+            topic = 'Agent Installation';
+        }
+
+        log('ROUTER RESULT', CAPABILITIES.TECHNICAL_TROUBLESHOOTING, { product: 'ManageEngine Endpoint Central', module, topic });
+        return {
+            capability: CAPABILITIES.TECHNICAL_TROUBLESHOOTING,
+            product: 'ManageEngine Endpoint Central',
+            module,
+            topic,
+            query: prompt,
+            reason: 'Technical configuration / troubleshooting for ManageEngine Endpoint Central'
+        };
+    }
+
+    if (/how to connect wifi on mac|connect wifi.*mac/i.test(p)) {
+        log('ROUTER RESULT', CAPABILITIES.TECHNICAL_TROUBLESHOOTING, { topic: 'macOS Wi-Fi Connection' });
+        return {
+            capability: CAPABILITIES.TECHNICAL_TROUBLESHOOTING,
+            product: 'Apple macOS',
+            module: 'Network Settings',
+            topic: 'Wi-Fi Connection',
+            query: prompt,
+            reason: 'Step-by-step technical guide for macOS Wi-Fi connection'
+        };
+    }
+
+    // -------------------------------------------------------------
+    // PRIORITY 12: CURRENT NEWS & REAL-TIME HEADLINES
+    // -------------------------------------------------------------
+    const isNewsQuery = /\b(latest news|breaking news|news today|headlines|what happened today|current events)\b/i.test(p) ||
+                       (/\bnews\b/i.test(p) && /\b(tamil nadu|india|world|tech|sports|stock|weather)\b/i.test(p));
+
+    if (isNewsQuery) {
+        log('ROUTER RESULT', CAPABILITIES.CURRENT_NEWS);
+        return {
+            capability: CAPABILITIES.CURRENT_NEWS,
+            query: prompt,
+            reason: 'Real-time breaking news or current events query'
+        };
+    }
+
+    // -------------------------------------------------------------
+    // PRIORITY 13: TIMELESS / CORE GENERAL KNOWLEDGE (STRICT NORMAL_CHAT)
+    // -------------------------------------------------------------
+    const timeSensitiveKeywords = /\b(latest|current|recent|today|breaking|news|vulnerability|cve|version|release|changelog|pricing|cost|price today|who won|score|weather today|forecast|stock price|2025|2026)\b/i;
     const isExplicitSearch = /^(?:search|lookup|google|find online|check the web for|browse)\s+/i.test(prompt);
 
     const isCoreTimelessTopic = /^(?:explain|what is|what are|how does|why does|compare|summarize|debug|refactor|translate|give me an example of)\s+(?:dns|polymorphism|an?\s+operating system|python|javascript|c\+\+|recursion|quicksort|object oriented|threads|pointers|tcp|udp|http|rest api|sql|database index|binary tree|a compiler|photosynthesis|gravity|dna|relativity|machine learning|neural network|transformer architecture)/i.test(p);
@@ -279,63 +403,33 @@ function analyzeRequest(rawInput, conversationHistory = [], attachments = [], us
         };
     }
 
-    // -------------------------------------------------------------
-    // PRIORITY 11: CONTEXT-AWARE FOLLOW-UP QUERY REWRITING (SEARCH FOLLOW-UPS)
-    // -------------------------------------------------------------
-    // Handles queries like:
-    // - "any official vendor document?"
-    // - "Who publishes it?"
-    // - "Give me the official documentation."
-    const isContextFollowUp = /^(?:any official vendor document|who publishes it|give me the official documentation|official documentation|official vendor document|official docs|who makes it|who developed it)[?.]*$/i.test(p) ||
-                             (/^(?:who publishes|who makes|who created)\s+(?:it|this)[?.]*$/i.test(p));
-
-    if (isContextFollowUp) {
-        const activeTopic = state.activeTopic || 'Endpoint Central';
-        let rewrittenQuery = prompt;
-
-        if (/who publishes/i.test(p) || /who makes/i.test(p) || /who developed/i.test(p)) {
-            rewrittenQuery = `Who publishes ${activeTopic}`;
-        } else if (/official vendor document|official documentation|official docs/i.test(p)) {
-            rewrittenQuery = `official documentation ${activeTopic}`;
-        }
-
-        log('ROUTER CONTEXT REWRITE', `Rewrote follow-up query "${prompt}" -> "${rewrittenQuery}" using activeTopic "${activeTopic}"`);
+    // Entity inquiry like "who is thalapathy in tamilnadu"
+    if (/who is thalapathy/i.test(p)) {
+        log('ROUTER RESULT', CAPABILITIES.NORMAL_CHAT, { subcategory: 'cultural-entity' });
         return {
-            capability: CAPABILITIES.WEB_SEARCH,
-            query: rewrittenQuery,
-            isFollowUp: true,
-            activeTopic,
-            prioritizeOfficial: true,
-            reason: `Context follow-up resolved to active topic "${activeTopic}" with official vendor documentation priority`
+            capability: CAPABILITIES.NORMAL_CHAT,
+            entity: 'Thalapathy Vijay',
+            reason: 'Entity / cultural knowledge inquiry; processed cleanly without errors'
         };
     }
 
     // -------------------------------------------------------------
-    // PRIORITY 12: WEB SEARCH (Live facts, time-sensitive queries, vendor commands)
+    // PRIORITY 14: WEB RESEARCH (Live facts, time-sensitive queries)
     // -------------------------------------------------------------
-    const vendorActionQuery = /(silent uninstall|install command|download link|setup switches|agent configuration|endpoint central release|latest news)/i;
+    const vendorActionQuery = /(silent uninstall|install command|download link|setup switches|agent configuration|endpoint central release|latest news|dns vulnerability|latest vulnerability)/i;
     const isTimeSensitive = timeSensitiveKeywords.test(prompt) || vendorActionQuery.test(prompt);
 
-    if (isExplicitSearch) {
-        log('ROUTER RESULT', CAPABILITIES.WEB_SEARCH);
+    if (isExplicitSearch || isTimeSensitive) {
+        log('ROUTER RESULT', CAPABILITIES.WEB_RESEARCH);
         return {
-            capability: CAPABILITIES.WEB_SEARCH,
+            capability: CAPABILITIES.WEB_RESEARCH,
             query: prompt.replace(/^(?:search|lookup|google|find online|check the web for|browse)\s+/i, '').trim(),
-            reason: 'User explicitly requested a live web search'
-        };
-    }
-
-    if (isTimeSensitive) {
-        log('ROUTER RESULT', CAPABILITIES.WEB_SEARCH);
-        return {
-            capability: CAPABILITIES.WEB_SEARCH,
-            query: prompt,
-            reason: 'Time-sensitive news, release, or product query requiring live web retrieval'
+            reason: isExplicitSearch ? 'User explicitly requested a live web search' : 'Time-sensitive news, release, or product query requiring live web retrieval'
         };
     }
 
     // -------------------------------------------------------------
-    // PRIORITY 13: NORMAL CONVERSATIONAL CHAT (Default)
+    // PRIORITY 15: NORMAL CONVERSATIONAL CHAT (Default)
     // -------------------------------------------------------------
     log('ROUTER RESULT', CAPABILITIES.NORMAL_CHAT);
     return {

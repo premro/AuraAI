@@ -12,15 +12,18 @@ const { log } = require('./logger');
 // Extract files from standard PKZIP buffer (for DOCX & PPTX)
 function extractZipEntries(buffer) {
     const entries = {};
+    if (!buffer || buffer.length < 30) return entries;
     let offset = 0;
-    while (offset < buffer.length - 4) {
+    while (offset <= buffer.length - 30) {
         if (buffer.readUInt32LE(offset) === 0x04034b50) {
             const compMethod = buffer.readUInt16LE(offset + 8);
             const compSize = buffer.readUInt32LE(offset + 18);
             const nameLen = buffer.readUInt16LE(offset + 26);
             const extraLen = buffer.readUInt16LE(offset + 28);
+            if (offset + 30 + nameLen > buffer.length) break;
             const name = buffer.toString('utf8', offset + 30, offset + 30 + nameLen);
             const dataOffset = offset + 30 + nameLen + extraLen;
+            if (dataOffset + compSize > buffer.length) break;
             const compData = buffer.slice(dataOffset, dataOffset + compSize);
             
             let data = null;
@@ -172,7 +175,8 @@ function parsePptx(buffer, filename) {
 
 // Parse Structured Text/PDF string (from frontend PDF.js or plain text)
 function parseStructuredText(text, filename = 'document.txt', type = 'txt') {
-    const lines = text.split('\n');
+    const safeText = typeof text === 'string' ? text : String(text || '');
+    const lines = safeText.split('\n');
     const sections = [];
     let currentPage = 1;
     let currentHeading = 'Overview';

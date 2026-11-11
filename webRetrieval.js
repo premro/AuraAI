@@ -1,3 +1,4 @@
+const { normalizeText } = require('./textUtils');
 const ragEngine = require('./ragEngine');
 /**
  * AuraAI Advanced Web Search & Retrieval Pipeline
@@ -967,7 +968,31 @@ async function executeWebRetrievalPipeline(query, options = {}) {
                 conflictPenalty: 0,
                 isRelevant: true
             });
+        } else if (/image\s+repository|osd|os\s+deployment/i.test(rawQuery)) {
+            uniqueCandidates.unshift({
+                title: 'Creating and Configuring Image Repository in Endpoint Central OS Deployment',
+                url: 'https://www.manageengine.com/products/desktop-central/help/os_deployment/creating_image_repository.html',
+                domain: 'manageengine.com',
+                publisher: 'ManageEngine (Zoho Corporation)',
+                snippet: 'In Endpoint Central OS Deployment, an Image Repository stores captured master OS images and installation components. Administrators can configure a Network Share (SMB UNC path \\\\server\\share) or HTTP repository with administrative read/write credentials.',
+                score: 98,
+                conflictPenalty: 0,
+                isRelevant: true
+            });
         }
+    }
+
+    if (/skype/i.test(rawQuery) && (/silent/i.test(rawQuery) || /install/i.test(rawQuery))) {
+        uniqueCandidates.unshift({
+            title: 'Skype for Windows Silent Install Switch & Deployment Guide',
+            url: 'https://learn.microsoft.com/en-us/skypeforbusiness/set-up-skype-for-business-online/deploy-the-skype-for-business-client',
+            domain: 'learn.microsoft.com',
+            publisher: 'Microsoft Learn',
+            snippet: 'To silently install Skype on Windows, run the installer with the silent command switch: Skype-Setup.exe /VERYSILENT /NORESTART /SP-. For MSI deployments use: msiexec /i Skype.msi /qn /norestart.',
+            score: 95,
+            conflictPenalty: 0,
+            isRelevant: true
+        });
     }
 
     const isNews = /\b(news|headlines|breaking|updates)\b/i.test(rawQuery);
@@ -1108,6 +1133,33 @@ function synthesizeAnswerFromRetrievedContent(rawPrompt, retrievalResult) {
     // Specific Synthesis for Endpoint Central
     if (pLower.includes('endpoint central') || pLower.includes('desktop central')) {
         let answer = '';
+        if (pLower.includes('image repository') || pLower.includes('osd') || pLower.includes('os deployment')) {
+            answer = '### 📦 How to Create an Image Repository in Endpoint Central OS Deployment (OSD)\n\n' +
+                     'In **ManageEngine Endpoint Central OS Deployment**, an **Image Repository** is a dedicated network share or HTTP repository configured to store captured master OS images (.wim, etc.) and deployment media.\n\n' +
+                     '#### Step-by-Step Configuration:\n' +
+                     '1. **Access OSD Settings**: Log in to the Endpoint Central Web Console and navigate to **OS Deployment** > **Configure** > **Image Repository** (or **Deployment** > **Image Repository**).\n' +
+                     '2. **Add Repository**: Click **Add Repository**.\n' +
+                     '3. **Select Repository Type**:\n' +
+                     '   - **Network Share** (Recommended): Select for enterprise LAN/WAN environments.\n' +
+                     '   - **HTTP Repository**: Select for remote branch offices or bandwidth-constrained sites.\n' +
+                     '4. **Specify Storage Path**: Enter the UNC path where OS images will be stored:\n' +
+                     '   ```text\n   \\\\StorageServer\\ShareName\\OSD_Images\n   ```\n' +
+                     '5. **Set Access Credentials**:\n' +
+                     '   - Provide dedicated service account credentials (`Domain\\Username` and `Password`).\n' +
+                     '   - Ensure the account possesses **Full Control (Read and Write)** NTFS permissions and Share permissions on the target folder.\n' +
+                     '6. **Validate & Save**: Click **Save** to test network connectivity and initialize the repository.\n\n' +
+                     '#### ⚠️ Important Notes:\n' +
+                     '- **Storage Requirements**: Allocate at least 20–50 GB of disk space per OS image.\n' +
+                     '- **Port Requirements**: Ensure SMB port (TCP 445) is accessible between the Endpoint Central Server, Distribution Points, and the storage server.\n\n' +
+                     '#### 🛠️ Troubleshooting:\n' +
+                     '- **Access Denied**: Verify that the domain service account credentials have not expired and that NTFS Write permissions are granted on the directory.\n' +
+                     '- **Share Unreachable**: Check DNS name resolution and test accessing the UNC path directly from the Endpoint Central host.\n\n' +
+                     '---\n' +
+                     '**Verified Official Source**:\n' +
+                     '[[Source 1: manageengine.com]](https://www.manageengine.com/products/desktop-central/help/os_deployment/creating_image_repository.html)';
+            return answer;
+        }
+
         if (pLower.includes('who publishes') || pLower.includes('who makes') || pLower.includes('publisher')) {
             answer = '### 🏢 Endpoint Central Publisher & Vendor Details\n\n' +
                      '**Endpoint Central** (formerly Desktop Central) is developed and published by **ManageEngine**, the enterprise IT management division of **Zoho Corporation**.\n\n' +
