@@ -1083,7 +1083,11 @@ async function fetchWikiKnowledge(query) {
             const page = await sumRes.json();
             if (page.extract && page.extract.length > 25) {
                 const articleUrl = page.content_urls?.desktop?.page || `https://en.wikipedia.org/wiki/${encodeURIComponent(page.title)}`;
-                return `${page.extract.trim()}\n\n---\n*Source: [${page.title} Reference](${articleUrl})*`;
+                return [{
+                    title: page.title,
+                    snippet: page.extract.trim(),
+                    url: articleUrl
+                }];
             }
         }
     } catch (e) {}
@@ -1149,9 +1153,9 @@ const AURAAI_POLICY_SYSTEM_INSTRUCTION = `You are AuraAI, a helpful, accurate, g
      fixed structure or boilerplate between requests.`;
 
 // Call Google Gemini Official API
-async function callGeminiAPI(apiKey, prompt, messages = [], model = 'gemini-1.5-flash', webContext = '') {
+async function callGeminiAPI(apiKey, prompt, messages = [], model = 'gemini-2.5-flash', systemPrompt = '') {
     try {
-        const selectedModel = (model && model.includes('gemini')) ? model : 'gemini-1.5-flash';
+        const selectedModel = (model && model.includes('gemini')) ? model : (process.env.DEFAULT_GEMINI_MODEL || 'gemini-2.5-flash');
         const url = `https://generativelanguage.googleapis.com/v1beta/models/${selectedModel}:generateContent?key=${apiKey}`;
         
         let contents = [];
@@ -1168,10 +1172,7 @@ async function callGeminiAPI(apiKey, prompt, messages = [], model = 'gemini-1.5-
         }
 
         const requestBody = { contents };
-        let geminiSystemText = AURAAI_POLICY_SYSTEM_INSTRUCTION;
-        if (webContext && webContext.trim()) {
-            geminiSystemText += `\n\nLive Webpage Evidence:\n${webContext}\n\nInstructions for retrieved content:\n- Answer strictly based on this retrieved webpage content.\n- Associate each factual claim with the source citation [Source N (domain)](url).\n- If the content is not sufficient to answer reliably, state that a reliable source could not be found instead of inventing an answer.`;
-        }
+        const geminiSystemText = (systemPrompt && systemPrompt.trim()) ? systemPrompt : AURAAI_POLICY_SYSTEM_INSTRUCTION;
         requestBody.systemInstruction = {
             parts: [{ text: geminiSystemText }]
         };
@@ -1186,12 +1187,7 @@ async function callGeminiAPI(apiKey, prompt, messages = [], model = 'gemini-1.5-
             const data = await res.json();
             const text = data.candidates?.[0]?.content?.parts?.[0]?.text;
             if (text) {
-                return {
-                    text: text,
-                    provider: 'Google Gemini',
-                    model: selectedModel,
-                    verifiedOnline: true
-                };
+                return text;
             }
         } else {
             const errData = await res.json().catch(() => ({}));
@@ -1204,7 +1200,7 @@ async function callGeminiAPI(apiKey, prompt, messages = [], model = 'gemini-1.5-
 }
 
 // Call OpenAI Official API or Groq API
-async function callOpenAIAPI(apiKey, prompt, messages = [], model = 'gpt-4o-mini', webContext = '') {
+async function callOpenAIAPI(apiKey, prompt, messages = [], model = 'gpt-4o-mini', systemPrompt = '') {
     try {
         const isGroq = apiKey.startsWith('gsk_');
         let endpoint = 'https://api.openai.com/v1/chat/completions';
@@ -1225,10 +1221,7 @@ async function callOpenAIAPI(apiKey, prompt, messages = [], model = 'gpt-4o-mini
             chatMessages = [{ role: 'user', content: prompt }];
         }
 
-        let openAISystemText = AURAAI_POLICY_SYSTEM_INSTRUCTION;
-        if (webContext && webContext.trim()) {
-            openAISystemText += `\n\nLive Webpage Evidence:\n${webContext}\n\nInstructions for retrieved content:\n- Answer strictly based on this retrieved webpage content.\n- Associate each factual claim with the source citation [Source N (domain)](url).\n- If the content is not sufficient to answer reliably, state that a reliable source could not be found instead of inventing an answer.`;
-        }
+        const openAISystemText = (systemPrompt && systemPrompt.trim()) ? systemPrompt : AURAAI_POLICY_SYSTEM_INSTRUCTION;
         chatMessages.unshift({
             role: 'system',
             content: openAISystemText
@@ -1251,12 +1244,7 @@ async function callOpenAIAPI(apiKey, prompt, messages = [], model = 'gpt-4o-mini
             const data = await res.json();
             const text = data.choices?.[0]?.message?.content;
             if (text) {
-                return {
-                    text: text,
-                    provider: isGroq ? 'Groq Llama 3.3' : 'OpenAI',
-                    model: defaultModel,
-                    verifiedOnline: true
-                };
+                return text;
             }
         } else {
             const errData = await res.json().catch(() => ({}));
@@ -2444,19 +2432,9 @@ What would you like to work on?`;
         }
     }
 
-    // ManageEngine Endpoint Central Specific Guard (Never redirect to generic Wikipedia "Endpoint security")
+    // ManageEngine Endpoint Central Specific Guard
     if (/endpoint\s+central|desktop\s+central/i.test(p)) {
-        return "## Answer\n" +
-               "**ManageEngine Endpoint Central** (formerly Desktop Central) is an enterprise Unified Endpoint Management (UEM) and security solution developed by Zoho Corporation. It enables IT administrators to monitor, manage, and secure servers, desktops, laptops, mobile devices, and tablets from a single centralized web console.\n\n" +
-               "## Details\n" +
-               "- **Cross-Platform Management**: Manages Windows, macOS, Linux, ChromeOS, iOS, iPadOS, Android, and tvOS devices.\n" +
-               "- **Automated Patch Management**: Scans and deploys security patches for OS platforms and over 1,000 third-party applications.\n" +
-               "- **Software & OS Deployment**: Supports silent application installation, customized software packages, and bare-metal OS disk imaging.\n" +
-               "- **Asset Tracking & Remote Troubleshooting**: Audits hardware/software inventories, license tracking, and integrated remote desktop control.\n" +
-               "- **Endpoint Security**: Provides add-ons for vulnerability mitigation, browser security, application whitelisting, and USB device control.\n\n" +
-               "## Sources\n" +
-               "- [ManageEngine Endpoint Central Overview](https://www.manageengine.com/products/desktop-central/) (Official Vendor Documentation)\n" +
-               "- [ManageEngine Help & Administration Guide](https://www.manageengine.com/products/desktop-central/help/) (Official Vendor Documentation)";
+        return "**ManageEngine Endpoint Central** (formerly Desktop Central) is an enterprise Unified Endpoint Management (UEM) and security solution developed by Zoho Corporation. It enables IT administrators to monitor, manage, deploy software, automate patch management, and secure devices across Windows, macOS, Linux, and mobile operating systems from a single central console.";
     }
 
     // 9. Online Knowledge Lookup (Wikipedia - only when genuinely appropriate)
@@ -2465,8 +2443,8 @@ What would you like to work on?`;
     if (!isProcedureOrIT) {
         wikiResult = await fetchWikiKnowledge(rawPrompt);
     }
-    if (wikiResult) {
-        return normalizeText(wikiResult);
+    if (wikiResult && Array.isArray(wikiResult) && wikiResult[0] && wikiResult[0].snippet) {
+        return normalizeText(wikiResult[0].snippet);
     }
 
     // 10. Cooking, Recipes & Food Preparation
@@ -2500,8 +2478,7 @@ What would you like to work on?`;
                `3. Check the local service manager or installation logs to verify that the service is running and completed successfully.`;
     }
 
-    // 12. General Knowledge & Direct Conversational Fallback
-    return `Regarding **${rawPrompt}**: You can proceed by outlining your specific requirements, gathering any necessary resources or prerequisites, and applying standard best practices. Let me know if you would like more specific details, steps, or custom recommendations!`;
+    return null;
 }
 
 

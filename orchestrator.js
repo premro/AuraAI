@@ -44,21 +44,25 @@ async function handleChatRequest(options) {
 
   // Model caller adapter supporting both { messages } and (system, prompt, history)
   async function callModel(system, text, hist = []) {
+    let result = null;
     if (typeof options.callModelFn === 'function') {
-      return await options.callModelFn({ systemPrompt: system, prompt: text, model, history: hist });
-    }
-    try {
-      if (provider === 'gemini' && options.callGeminiAPI) {
-        return await options.callGeminiAPI(apiKey, text, hist, model, system);
+      result = await options.callModelFn({ systemPrompt: system, prompt: text, model, history: hist });
+    } else {
+      try {
+        if (provider === 'gemini' && options.callGeminiAPI) {
+          result = await options.callGeminiAPI(apiKey, text, hist, model, system);
+        } else if (provider === 'openai' && options.callOpenAIAPI) {
+          result = await options.callOpenAIAPI(apiKey, text, hist, model, system);
+        }
+      } catch (e) {
+        console.error('[orchestrator] model call failed:', e && e.message);
+        debug.error = e && e.message;
       }
-      if (provider === 'openai' && options.callOpenAIAPI) {
-        return await options.callOpenAIAPI(apiKey, text, hist, model, system);
-      }
-    } catch (e) {
-      console.error('[orchestrator] model call failed:', e && e.message);
-      debug.error = e && e.message;
     }
-    return null;
+    if (result && typeof result === 'object') {
+      return result.text || result.content || result.response || '';
+    }
+    return result || null;
   }
 
   // 1. Resolve multi-turn context and handle follow-up phrases
@@ -125,22 +129,24 @@ async function handleChatRequest(options) {
   }
 
   // 3. Construct LLM payload with conversation history & verified context
-  let fullPrompt = userText;
+  const systemMessage = H.SYSTEM_PROMPT || "You are a helpful, direct AI assistant. Answer the user's question accurately. If search context is provided, use it to ground your answer. If no search context is provided or if it is irrelevant, answer using your internal knowledge. Never invent fake releases or repeat irrelevant sources.";
+
+  let finalPrompt = userText;
   if (searchContext && searchContext.length > 0) {
-    const contextText = searchContext
-      .map((c, i) => `[Source ${i + 1}]: ${c.title || 'Web Result'}\n${c.snippet || ''}\nURL: ${c.url || ''}`)
+    const formattedSources = searchContext
+      .map(s => `Title: ${s.title || 'Source'}\nContent: ${s.snippet || ''}`)
       .join('\n\n');
-    fullPrompt = `Search Context:\n${contextText}\n\nUser Question:\n${userText}`;
+    finalPrompt = `Search Context:\n${formattedSources}\n\nUser Question:\n${userText}`;
   }
 
-  // 4. Always generate response using the LLM
-  let aiResponse = await callModel(H.SYSTEM_PROMPT, fullPrompt, prior.slice(-8));
+  // 4. ALWAYS generate response using the LLM
+  let aiResponse = await callModel(systemMessage, finalPrompt, prior.slice(-8));
 
   // 5. Code validation retry (retry model with issue, never swap in canned content)
   if (aiResponse) {
     const problem = H.checkCode(aiResponse, userText);
     if (problem) {
-      const retry = await callModel(H.SYSTEM_PROMPT + '\n\n' + problem, fullPrompt, prior.slice(-8));
+      const retry = await callModel(systemMessage + '\n\n' + problem, finalPrompt, prior.slice(-8));
       if (retry) aiResponse = retry;
       debug.codeRetry = true;
     }
