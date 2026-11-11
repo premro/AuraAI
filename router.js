@@ -471,8 +471,8 @@ function analyzeRequest(rawPrompt, history = [], attachments = [], userConfig = 
     // - "how to connect wifi on mac m4"
     // - "How do I install Endpoint Central agent?"
     const isEndpointCentralQuery = /endpoint\s+central|desktop\s+central/i.test(p);
-    const isTechTroubleshooting = /^(?:how to|how do i|steps to|guide to|configure|setup|install|deploy|troubleshoot|fix|connect)\b/i.test(p) ||
-                                 /image\s+repository|agent\s+install|connect\s+wifi/i.test(p);
+    const isTechTroubleshooting = /^(?:how to|how do i|steps to|guide to|configure|setup|install|deploy|troubleshoot|fix|connect|is this|why does|how can)\b/i.test(p) ||
+                                 /image\s+repository|agent\s+install|connect\s+wifi|error|issue|failed|silent install|update/i.test(p);
 
     if (isEndpointCentralQuery && isTechTroubleshooting) {
         let module = 'General';

@@ -1137,8 +1137,10 @@ function formatMarkdown(text) {
             let rawHtml = marked.parse(text, { breaks: true, gfm: true });
             
             // Format citation pills like [ManageEngine +1](https://...) or [Source +N](...) into rich badges
-            rawHtml = rawHtml.replace(/<a\s+href="([^"]+)">([^<]*\+\d+[^<]*)<\/a>/gi, '<a class="source-pill-badge" href="$1" target="_blank" rel="noopener">🌐 $2</a>');
-            rawHtml = rawHtml.replace(/<a\s+href="([^"]+)">🌐\s*([^<]+)<\/a>/gi, '<a class="source-pill-badge" href="$1" target="_blank" rel="noopener">🌐 $2</a>');
+            rawHtml = rawHtml.replace(/<a\s+href="([^"]+)">([^<]*\+\d+[^<]*)<\/a>/gi, '<a class="source-pill-badge" href="$1" target="_blank" rel="noopener noreferrer">🌐 $2</a>');
+            rawHtml = rawHtml.replace(/<a\s+href="([^"]+)">🌐\s*([^<]+)<\/a>/gi, '<a class="source-pill-badge" href="$1" target="_blank" rel="noopener noreferrer">🌐 $2</a>');
+            // Ensure all links open in a new tab without losing conversation context
+            rawHtml = rawHtml.replace(/<a\s+(?!.*?target=)(href="[^"]+")/gi, '<a target="_blank" rel="noopener noreferrer" $1');
 
             if (window.DOMPurify && typeof DOMPurify.sanitize === 'function') {
                 return DOMPurify.sanitize(rawHtml, {
