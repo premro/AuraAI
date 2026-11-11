@@ -2837,6 +2837,7 @@ function handleRequest(req, res) {
                     verifiedOnline: !!result.verifiedOnline,
                     model: result.model || userConfig.model,
                     capability: result.capability,
+                    sources: result.sources || [],
                     debug: result.debug
                 }));
             } catch (err) {

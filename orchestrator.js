@@ -19,15 +19,16 @@ function normalizeTechTypos(text) {
   t = t.replace(/\bendpoint\s*center\b/gi, 'Endpoint Central');
   t = t.replace(/\bbroyani\b/gi, 'biryani');
   t = t.replace(/\bwin\s*12\b/gi, 'Windows 12');
+  t = t.replace(/\bmac\s*0os\b/gi, 'macOS');
   return t;
 }
 
 /**
- * Single Standardized Pipeline:
- * Rewrite -> Optional Search -> Call LLM -> Return Response
+ * Context-First Standardized Pipeline:
+ * Query Preprocessing -> Optional Grounded Search -> LLM Generation -> Return Response
  */
 async function handleChatRequest(options) {
-  const rawPrompt = H.stripPrefix(options.userPrompt || options.prompt || '');
+  const userPrompt = H.stripPrefix(options.userPrompt || options.prompt || '');
   const attachments = options.attachments || [];
   const history = options.history || [];
   const userConfig = options.userConfig || {};
@@ -39,9 +40,9 @@ async function handleChatRequest(options) {
     (provider === 'gemini' ? (process.env.DEFAULT_GEMINI_MODEL || 'gemini-2.5-flash') : 'gpt-4o-mini');
 
   const debug = { conversationId, provider, model, keyPresent: !!apiKey };
-  const prior = H.dropCurrentTurn(history, rawPrompt);
+  const prior = H.dropCurrentTurn(history, userPrompt);
 
-  // Model caller adapter
+  // Model caller adapter supporting both { messages } and (system, prompt, history)
   async function callModel(system, text, hist = []) {
     if (typeof options.callModelFn === 'function') {
       return await options.callModelFn({ systemPrompt: system, prompt: text, model, history: hist });
@@ -60,70 +61,71 @@ async function handleChatRequest(options) {
     return null;
   }
 
-  // 1. Context-aware query resolution & typo normalization
-  let userText = H.withAttachments(rawPrompt, attachments);
+  // 1. Resolve multi-turn context and handle follow-up phrases
+  let userText = H.withAttachments(userPrompt, attachments);
   userText = normalizeTechTypos(userText);
-  let searchQuery = userText;
+  let resolvedQuery = userText;
 
-  if (prior.length > 0 && rawPrompt.length < 120 && !attachments.length) {
+  if (prior.length > 0 && userPrompt.length < 120 && !attachments.length) {
     if (provider) {
       try {
-        const resolved = await callModel(
+        const rewritten = await callModel(
           H.REWRITE_SYSTEM,
           userText,
-          prior.slice(-4)
+          prior.slice(-6)
         );
-        if (resolved && resolved.trim() && resolved.length < 300) {
-          userText = normalizeTechTypos(resolved.trim());
-          searchQuery = userText;
+        if (rewritten && rewritten.trim() && rewritten.length < 300) {
+          resolvedQuery = normalizeTechTypos(rewritten.trim());
+          if (resolvedQuery !== "NO_SEARCH_NEEDED") {
+            userText = resolvedQuery;
+          }
         }
       } catch (e) {
-        searchQuery = userText;
+        console.warn("Rewrite failed, using original prompt:", e.message);
+        resolvedQuery = userText;
       }
     } else {
       // Local context resolution when no external LLM is configured
       const priorText = prior.map(m => m.content || '').join(' ');
       const ecMatch = priorText.match(/\b(endpoint\s*centr[ae]?l|desktop\s*centr[ae]?l|dcagent)\b/i);
       if (ecMatch && /\b(gpo|push|agent|install|silent|powershell|deploy|uninstall|upgrade|update)\b/i.test(userText) && !ecMatch[0].toLowerCase().includes(userText.toLowerCase())) {
-        searchQuery = `${userText} ${ecMatch[0]} agent`;
-        userText = searchQuery;
+        resolvedQuery = `${userText} ${ecMatch[0]} agent`;
+        userText = resolvedQuery;
       }
       if (/calculator|calculatot|compute/i.test(priorText) && /\b(error|bug|enter|fix|wrong|broken|fails|not working|=|crash)\b/i.test(userText)) {
         userText = `Fix error in calculator code: ${userText}`;
-        searchQuery = userText;
+        resolvedQuery = userText;
       }
     }
   }
 
-  // 2. Retrieval (if enabled)
+  // 2. Fetch grounded search results unless marked unnecessary
   const route = analyzeRequest(userText, prior, attachments);
   debug.capability = route.capability;
   const isCode = route.capability === CAPABILITIES.CODE_GENERATION || H.looksLikeCode(userText);
   const webSearchEnabled = options.webSearchEnabled !== false && userConfig.webSearch !== false && !isCode;
 
   let searchContext = [];
-  if (webSearchEnabled) {
+  if (webSearchEnabled && resolvedQuery !== "NO_SEARCH_NEEDED") {
     try {
       if (typeof options.webSearch === 'function') {
-        const customRes = await options.webSearch(searchQuery);
+        const customRes = await options.webSearch(resolvedQuery);
         if (typeof customRes === 'string' && customRes.trim()) {
           searchContext = [{ title: 'Web Search', snippet: customRes.trim(), url: '' }];
         } else if (Array.isArray(customRes)) {
           searchContext = customRes;
         }
       } else {
-        searchContext = await searchWeb(searchQuery);
+        searchContext = await searchWeb(resolvedQuery);
       }
     } catch (err) {
-      console.warn('Web search retrieval failed, proceeding with model knowledge:', err.message);
+      console.warn("Search retrieval failed, falling back to model knowledge:", err.message);
       searchContext = [];
     }
   }
 
-  // 3. Build dynamic prompt for the LLM
+  // 3. Construct LLM payload with conversation history & verified context
   let fullPrompt = userText;
-  let systemPrompt = H.SYSTEM_PROMPT;
-
   if (searchContext && searchContext.length > 0) {
     const contextText = searchContext
       .map((c, i) => `[Source ${i + 1}]: ${c.title || 'Web Result'}\n${c.snippet || ''}\nURL: ${c.url || ''}`)
@@ -131,20 +133,20 @@ async function handleChatRequest(options) {
     fullPrompt = `Search Context:\n${contextText}\n\nUser Question:\n${userText}`;
   }
 
-  // 4. Always let the LLM generate the final output
-  let aiResponse = await callModel(systemPrompt, fullPrompt, prior);
+  // 4. Always generate response using the LLM
+  let aiResponse = await callModel(H.SYSTEM_PROMPT, fullPrompt, prior.slice(-8));
 
   // 5. Code validation retry (retry model with issue, never swap in canned content)
   if (aiResponse) {
     const problem = H.checkCode(aiResponse, userText);
     if (problem) {
-      const retry = await callModel(systemPrompt + '\n\n' + problem, fullPrompt, prior);
+      const retry = await callModel(H.SYSTEM_PROMPT + '\n\n' + problem, fullPrompt, prior.slice(-8));
       if (retry) aiResponse = retry;
       debug.codeRetry = true;
     }
   }
 
-  // 6. Intelligent local knowledge fallback when no external LLM is reachable
+  // 6. Intelligent local fallback when no external LLM is reachable
   const smartFallback = options.generateBuiltInSmartKnowledge || options.generateSmartResponseFallback;
   if (!aiResponse) {
     if (typeof smartFallback === 'function' && !userConfig.strictModelOnly) {
@@ -198,7 +200,6 @@ async function handleChatRequest(options) {
   };
 }
 
-// orchestrateRequest is aliased directly to handleChatRequest for unified pipeline consistency
 const orchestrateRequest = handleChatRequest;
 
 module.exports = {

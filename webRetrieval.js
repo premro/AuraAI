@@ -1780,11 +1780,25 @@ async function fetchWikiKnowledge(query) {
   return null;
 }
 
+const BLOCKED_DOMAINS = [
+  'fandom.com',
+  'fanfiction.net',
+  'wikia.org',
+  'speculative.fandom.com',
+  'tvtropes.org',
+  'wattpad.com',
+  'archiveofourown.org'
+];
+
 async function fetchLiveSearch(query) {
   try {
     const pipelineRes = await executeWebRetrievalPipeline(query);
     if (pipelineRes && Array.isArray(pipelineRes.sources) && pipelineRes.sources.length > 0) {
-      return pipelineRes.sources;
+      return pipelineRes.sources.map(s => ({
+        title: s.title || 'Source',
+        snippet: s.snippet || (Array.isArray(s.passages) ? s.passages.join('\n') : (s.content || '')),
+        url: s.url || ''
+      }));
     }
   } catch (err) {
     console.warn("fetchLiveSearch failed:", err.message);
@@ -1792,31 +1806,30 @@ async function fetchLiveSearch(query) {
   return [];
 }
 
-async function searchWeb(query, options = {}) {
-  let results = [];
-  const needsLiveLookup = isDynamicQuery(query);
-
-  // 1. Wikipedia lookup only if the query is not asking for live/versioned data
-  if (!needsLiveLookup && options.allowStaticWiki !== false) {
-    try {
-      results = await fetchWikiKnowledge(query);
-    } catch (err) {
-      console.warn("Wiki fetch failed, falling back to live search:", err.message);
-    }
+async function searchWeb(query) {
+  if (!query || query === "NO_SEARCH_NEEDED" || !String(query).trim()) {
+    return [];
   }
 
-  // 2. Fall back to live web search (DuckDuckGo / search API) if wiki was skipped or empty
-  if (!results || results.length === 0) {
-    try {
-      results = await fetchLiveSearch(query);
-    } catch (err) {
-      console.warn("Live web search failed:", err.message);
-      results = [];
-    }
-  }
+  try {
+    const rawResults = await fetchLiveSearch(String(query).trim());
+    if (!Array.isArray(rawResults)) return [];
 
-  // 3. Return results array (empty array if nothing found, never throw a hard refusal here)
-  return Array.isArray(results) ? results : [];
+    // Filter out fan-fiction and speculative wiki domains
+    const filteredResults = rawResults.filter(item => {
+      if (!item.url) return true;
+      return !BLOCKED_DOMAINS.some(domain => item.url.toLowerCase().includes(domain));
+    });
+
+    return filteredResults.slice(0, 5).map(item => ({
+      title: item.title || 'Source',
+      snippet: item.snippet || '',
+      url: item.url || ''
+    }));
+  } catch (error) {
+    console.warn("Search retrieval failed, falling back to model knowledge:", error.message);
+    return [];
+  }
 }
 
 module.exports = {
