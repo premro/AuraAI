@@ -2295,7 +2295,30 @@ What would you like to work on?`;
         }
     }
 
-    // 9. Online Knowledge Lookup (Wikipedia)
+    // 8b. Built-in Core Knowledge First (Preempts Wikipedia fallback bias)
+    if (orchestrator.generateBuiltInSmartKnowledge) {
+        const smartKnowledge = orchestrator.generateBuiltInSmartKnowledge(rawPrompt, conversationId);
+        if (smartKnowledge) {
+            return normalizeText(smartKnowledge);
+        }
+    }
+
+    // ManageEngine Endpoint Central Specific Guard (Never redirect to generic Wikipedia "Endpoint security")
+    if (/endpoint\s+central|desktop\s+central/i.test(p)) {
+        return "## Answer\n" +
+               "**ManageEngine Endpoint Central** (formerly Desktop Central) is an enterprise Unified Endpoint Management (UEM) and security solution developed by Zoho Corporation. It enables IT administrators to monitor, manage, and secure servers, desktops, laptops, mobile devices, and tablets from a single centralized web console.\n\n" +
+               "## Details\n" +
+               "- **Cross-Platform Management**: Manages Windows, macOS, Linux, ChromeOS, iOS, iPadOS, Android, and tvOS devices.\n" +
+               "- **Automated Patch Management**: Scans and deploys security patches for OS platforms and over 1,000 third-party applications.\n" +
+               "- **Software & OS Deployment**: Supports silent application installation, customized software packages, and bare-metal OS disk imaging.\n" +
+               "- **Asset Tracking & Remote Troubleshooting**: Audits hardware/software inventories, license tracking, and integrated remote desktop control.\n" +
+               "- **Endpoint Security**: Provides add-ons for vulnerability mitigation, browser security, application whitelisting, and USB device control.\n\n" +
+               "## Sources\n" +
+               "- [ManageEngine Endpoint Central Overview](https://www.manageengine.com/products/desktop-central/) (Official Vendor Documentation)\n" +
+               "- [ManageEngine Help & Administration Guide](https://www.manageengine.com/products/desktop-central/help/) (Official Vendor Documentation)";
+    }
+
+    // 9. Online Knowledge Lookup (Wikipedia - only when genuinely appropriate)
     const wikiResult = await fetchWikiKnowledge(rawPrompt);
     if (wikiResult) {
         return normalizeText(wikiResult);
